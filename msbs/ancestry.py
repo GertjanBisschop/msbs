@@ -53,6 +53,7 @@ class Lineage:
     node: int
     ancestry: List[AncestryInterval]
     b: float = 1.0
+    weight: float = 0.0
 
     def __str__(self):
         s = f"{self.node}:["
@@ -85,7 +86,35 @@ class Lineage:
         """
         return self.ancestry[-1].right
 
-    def split(self, breakpoint):
+    def set_b(self, b_map):
+        b = .0
+        cumspan = .0
+        m = len(self.ancestry)
+        n = len(b_map.rate)
+        i = 0 # interval index
+        j = 1 # b_map index
+        left = 0
+        while i < m:
+            left = max(self.ancestry[i].left, left)
+            if left >= b_map.position[j]:
+                if j < n:
+                    j += 1
+            else:
+                right = min(b_map.position[j], self.ancestry[i].right)
+                span = right - left
+                b += b_map.rate[j-1] * span
+                cumspan += span
+                if right == self.ancestry[i].right:
+                    i += 1
+                if right == b_map.position[j]:
+                    j += 1
+                left = right
+        if cumspan == 0:
+            print(self)
+        assert cumspan > 0
+        self.b = b / cumspan
+
+    def split(self, breakpoint, b_map):
         """
         Splits the ancestral material for this lineage at the specified
         breakpoint, and returns a second lineage with the ancestral
@@ -103,7 +132,9 @@ class Lineage:
                 left_ancestry.append(dataclasses.replace(interval, right=breakpoint))
                 right_ancestry.append(dataclasses.replace(interval, left=breakpoint))
         self.ancestry = left_ancestry
-        return Lineage(self.node, right_ancestry)
+        self.set_b(b_map)
+        right_lin = Lineage(self.node, right_ancestry)
+        return right_lin
 
 
 # The details of the machinery in the next two functions aren't important.
@@ -191,6 +222,13 @@ def fully_coalesced(lineages, n):
                 return False
     return True
 
+def pairwise_products(v: np.ndarray):
+    assert len(v.shape) == 1
+    n = v.shape[0]
+    m = v.reshape(n, 1) @ v.reshape(1, n)
+    return m[np.tril_indices_from(m, k=-1)].ravel()
+
+
 @dataclasses.dataclass
 class RateMap:
     position: np.ndarray
@@ -210,9 +248,7 @@ class RateMap:
 
 @dataclasses.dataclass
 class BMap(RateMap):
-    
-    def init_b_value(self):
-        return self.weighted_average()
+    pass
 
 @dataclasses.dataclass
 class Simulator:
@@ -230,17 +266,32 @@ class Simulator:
             position = np.zeros(2)
             position[-1] = self.L
             self.B = BMap(position, np.ones(1))
+        self.lineages = []
+        self.num_lineages = 0
 
     def common_ancestor_waiting_time_from_rate(self, rate):
         u = self.rng.expovariate(rate)
+        # incorporate info from B-map
         return self.ploidy * self.Ne * u
     
-    def common_ancestor_waiting_time(self, lineages):
-        n = len(lineages)
-        rate = n * (n - 1) / 2
+    def common_ancestor_waiting_time(self):
+        # perform all pairwise weighted contributions
+        n = self.num_lineages
+        rate = np.sum(pairwise_products(np.array(self.coal_rates)))
         return self.common_ancestor_waiting_time_from_rate(rate)
+    
+    def remove_lineage(self, lineage_id):
+        lin = self.lineages.pop(lineage_id)
+        _ = self.coal_rates.pop(lineage_id)
+        self.num_lineages -= 1
+        return lin
 
-    def sim_coalescent(self):
+    def insert_lineage(self, lineage):
+        lineage.set_b(self.B)
+        self.lineages.append(lineage)
+        self.num_lineages += 1
+
+    def sim_coalescent(self, simplify=True):
         """
         Simulate under the coalescent with recombination
         and return the tskit TreeSequence object.
@@ -250,36 +301,36 @@ class Simulator:
         
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
-        lineages = []
         nodes = []
         for _ in range(self.n * self.ploidy):
             segment_chain = [AncestryInterval(0, self.L, 1)]
-            b_value = self.B.init_b_value()
-            lineages.append(Lineage(len(nodes), segment_chain, b_value))
+            b_value = self.B.weighted_average()
+            self.insert_lineage(Lineage(len(nodes), segment_chain, b_value))
             nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
         t = 0
-        while not fully_coalesced(lineages, self.n * self.ploidy):
-            lineage_links = [lineage.num_recombination_links for lineage in lineages]
+        while not fully_coalesced(self.lineages, self.n * self.ploidy):
+            lineage_links = [lineage.num_recombination_links for lineage in self.lineages]
             total_links = sum(lineage_links)
             re_rate = total_links * self.rho
             t_re = math.inf if re_rate == 0 else self.rng.expovariate(re_rate)
-            t_ca = self.common_ancestor_waiting_time(lineages)
+            self.coal_rates = [1/lineage.b for lineage in self.lineages]
+            t_ca = self.common_ancestor_waiting_time()
             t_inc = min(t_re, t_ca)
             t += t_inc
 
             if t_inc == t_re: # recombination
-                left_lineage = self.rng.choices(lineages, weights=lineage_links)[0]
+                left_lineage = self.rng.choices(self.lineages, weights=lineage_links)[0]
                 breakpoint = self.rng.randrange(left_lineage.left + 1, left_lineage.right)
                 assert left_lineage.left < breakpoint < left_lineage.right
-                right_lineage = left_lineage.split(breakpoint)
-                lineages.append(right_lineage)
+                right_lineage = left_lineage.split(breakpoint, self.B)
+                self.insert_lineage(right_lineage)
                 child = left_lineage.node
                 assert right_lineage.node == child
 
             else: # common ancestor event
-                a = lineages.pop(self.rng.randrange(len(lineages)))
-                b = lineages.pop(self.rng.randrange(len(lineages)))
+                a = self.remove_lineage(self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[0])
+                b = self.remove_lineage(self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[0])
                 c = Lineage(len(nodes), [])
                 for interval, intersecting_lineages in merge_ancestry([a, b]):
                     # if interval.ancestral_to < n:
@@ -291,7 +342,7 @@ class Simulator:
 
                 nodes.append(Node(time=t))
                 # if len(c.ancestry) > 0:
-                lineages.append(c)
+                self.insert_lineage(c)
 
         for node in nodes:
             tables.nodes.add_row(flags=node.flags, time=node.time, metadata=node.metadata)
@@ -299,7 +350,11 @@ class Simulator:
         # TODO not sure if this is the right thing to do, but it makes it easier
         # to compare with examples.
         tables.edges.squash()
-        return tables.tree_sequence()
+        ts = tables.tree_sequence()
+        if simplify:
+            ts = ts.simplify()
+        
+        return ts
 
 
 @dataclasses.dataclass
