@@ -9,20 +9,6 @@ from typing import Any
 import numpy as np
 import tskit
 
-NODE_IS_RECOMB = 1 << 1
-
-
-# AncestryInterval is the equivalent of msprime's Segment class. The
-# important different here is that we don't associated nodes with
-# individual intervals here: because this is an ARG, nodes that
-# we pass through are recorded.
-#
-# (The ancestral_to field is also different here, but that's because
-# I realised that the way we're tracking extant ancestral material
-# in msprime is unnecessarily complicated, and we can actually
-# track it locally. There is potentially quite a large performance
-# increase available in msprime from this.)
-
 
 @dataclasses.dataclass
 class AncestryInterval:
@@ -34,6 +20,7 @@ class AncestryInterval:
     left: int
     right: int
     ancestral_to: int
+    value: int = 0
 
     @property
     def span(self):
@@ -53,12 +40,13 @@ class Lineage:
     node: int
     ancestry: List[AncestryInterval]
     b: float = 1.0
-    weight: float = 0.0
 
     def __str__(self):
         s = f"{self.node}:["
         for interval in self.ancestry:
-            s += str((interval.left, interval.right, interval.ancestral_to))
+            s += str(
+                (interval.left, interval.right, interval.ancestral_to, interval.value)
+            )
             s += ", "
         if len(self.ancestry) > 0:
             s = s[:-2]
@@ -87,13 +75,14 @@ class Lineage:
         return self.ancestry[-1].right
 
     def set_b(self, b_map):
-        b = .0
-        cumspan = .0
+        b = 0.0
+        cumspan = 0.0
         m = len(self.ancestry)
         n = len(b_map.rate)
-        i = 0 # interval index
-        j = 1 # b_map index
+        i = 0  # interval index
+        j = 1  # b_map index
         left = 0
+
         while i < m:
             left = max(self.ancestry[i].left, left)
             if left >= b_map.position[j]:
@@ -102,7 +91,7 @@ class Lineage:
             else:
                 right = min(b_map.position[j], self.ancestry[i].right)
                 span = right - left
-                b += b_map.rate[j-1] * span
+                b += b_map.rate[j - 1] * span
                 cumspan += span
                 if right == self.ancestry[i].right:
                     i += 1
@@ -122,6 +111,7 @@ class Lineage:
         """
         left_ancestry = []
         right_ancestry = []
+
         for interval in self.ancestry:
             if interval.right <= breakpoint:
                 left_ancestry.append(interval)
@@ -134,6 +124,7 @@ class Lineage:
         self.ancestry = left_ancestry
         self.set_b(b_map)
         right_lin = Lineage(self.node, right_ancestry)
+
         return right_lin
 
 
@@ -161,6 +152,7 @@ def overlapping_segments(segments):
     right = S[0].left
     X = []
     j = 0
+
     while j < n:
         # Remove any elements of X with right <= left
         left = right
@@ -192,6 +184,7 @@ def merge_ancestry(lineages):
     """
     # See note above on the implementation - this could be done more cleanly.
     segments = []
+
     for lineage in lineages:
         for interval in lineage.ancestry:
             segments.append(
@@ -211,21 +204,11 @@ class Node:
     metadata: dict = dataclasses.field(default_factory=dict)
 
 
-def fully_coalesced(lineages, n):
-    """
-    Returns True if all segments are ancestral to n samples in all
-    lineages.
-    """
-    for lineage in lineages:
-        for segment in lineage.ancestry:
-            if segment.ancestral_to < n:
-                return False
-    return True
-
 def pairwise_products(v: np.ndarray):
     assert len(v.shape) == 1
     n = v.shape[0]
     m = v.reshape(n, 1) @ v.reshape(1, n)
+
     return m[np.tril_indices_from(m, k=-1)].ravel()
 
 
@@ -242,23 +225,27 @@ class RateMap:
         ret = 0
         i = 0
         while i < self.rate.size:
-            ret += (self.position[i+1] - self.position[i]) * self.rate[i]
+            ret += (self.position[i + 1] - self.position[i]) * self.rate[i]
             i += 1
         return ret
+
 
 @dataclasses.dataclass
 class BMap(RateMap):
     pass
 
+
 @dataclasses.dataclass
 class Simulator:
     L: float
-    rho: float
+    r: float
     n: int
     Ne: float
     ploidy: int = 2
     seed: int = None
     B: BMap = None
+    s: float = None
+    model: str = "localne"
 
     def __post_init__(self):
         self.rng = random.Random(self.seed)
@@ -273,32 +260,70 @@ class Simulator:
         u = self.rng.expovariate(rate)
         # incorporate info from B-map
         return self.ploidy * self.Ne * u
-    
+
     def common_ancestor_waiting_time(self):
         # perform all pairwise weighted contributions
         n = self.num_lineages
         rate = np.sum(pairwise_products(np.array(self.coal_rates)))
         return self.common_ancestor_waiting_time_from_rate(rate)
-    
+
     def remove_lineage(self, lineage_id):
         lin = self.lineages.pop(lineage_id)
-        _ = self.coal_rates.pop(lineage_id)
+        if self.model == "localne":
+            _ = self.coal_rates.pop(lineage_id)
         self.num_lineages -= 1
         return lin
 
     def insert_lineage(self, lineage):
-        lineage.set_b(self.B)
+        if self.model == "localne":
+            lineage.set_b(self.B)
         self.lineages.append(lineage)
         self.num_lineages += 1
 
-    def sim_coalescent(self, simplify=True):
+    def fully_coalesced(self):
         """
-        Simulate under the coalescent with recombination
-        and return the tskit TreeSequence object.
+        Returns True if all segments are ancestral to n samples in all
+        lineages.
+        """
+        if self.model == "zeng":
+            pass
+        else:
+            n = self.n * self.ploidy
+            for lineage in self.lineages:
+                for segment in lineage.ancestry:
+                    if segment.ancestral_to < n:
+                        return False
+        return True
+
+    def run(self, simplify=True):
+        if self.model == "localne":
+            return self._sim_local_ne(simplify)
+        elif self.model == "zeng":
+            assert self.s is not None
+            return self._sim_zeng(simplify)
+        else:
+            raise ValueError("Model not implemented.")
+
+    def finalise(self, tables, nodes, simplify):
+        for node in nodes:
+            tables.nodes.add_row(
+                flags=node.flags, time=node.time, metadata=node.metadata
+            )
+        tables.sort()
+        tables.edges.squash()
+        ts = tables.tree_sequence()
+        if simplify:
+            ts = ts.simplify()
+
+        return ts
+
+    def _sim_local_ne(self, simplify=True):
+        """
+        Experimental implementation of coalescent with local Ne map along genome.
 
         NOTE! This hasn't been statistically tested and is probably not correct.
         """
-        
+
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         nodes = []
@@ -309,28 +334,40 @@ class Simulator:
             nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
         t = 0
-        while not fully_coalesced(self.lineages, self.n * self.ploidy):
-            lineage_links = [lineage.num_recombination_links for lineage in self.lineages]
+        while not self.fully_coalesced():
+            lineage_links = [
+                lineage.num_recombination_links for lineage in self.lineages
+            ]
             total_links = sum(lineage_links)
-            re_rate = total_links * self.rho
+            re_rate = total_links * self.r
             t_re = math.inf if re_rate == 0 else self.rng.expovariate(re_rate)
-            self.coal_rates = [1/lineage.b for lineage in self.lineages]
+            self.coal_rates = [1 / lineage.b for lineage in self.lineages]
             t_ca = self.common_ancestor_waiting_time()
             t_inc = min(t_re, t_ca)
             t += t_inc
 
-            if t_inc == t_re: # recombination
+            if t_inc == t_re:  # recombination
                 left_lineage = self.rng.choices(self.lineages, weights=lineage_links)[0]
-                breakpoint = self.rng.randrange(left_lineage.left + 1, left_lineage.right)
+                breakpoint = self.rng.randrange(
+                    left_lineage.left + 1, left_lineage.right
+                )
                 assert left_lineage.left < breakpoint < left_lineage.right
                 right_lineage = left_lineage.split(breakpoint, self.B)
                 self.insert_lineage(right_lineage)
                 child = left_lineage.node
                 assert right_lineage.node == child
 
-            else: # common ancestor event
-                a = self.remove_lineage(self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[0])
-                b = self.remove_lineage(self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[0])
+            else:  # common ancestor event
+                a = self.remove_lineage(
+                    self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[
+                        0
+                    ]
+                )
+                b = self.remove_lineage(
+                    self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[
+                        0
+                    ]
+                )
                 c = Lineage(len(nodes), [])
                 for interval, intersecting_lineages in merge_ancestry([a, b]):
                     # if interval.ancestral_to < n:
@@ -341,91 +378,62 @@ class Simulator:
                         )
 
                 nodes.append(Node(time=t))
-                # if len(c.ancestry) > 0:
                 self.insert_lineage(c)
 
-        for node in nodes:
-            tables.nodes.add_row(flags=node.flags, time=node.time, metadata=node.metadata)
-        tables.sort()
-        # TODO not sure if this is the right thing to do, but it makes it easier
-        # to compare with examples.
-        tables.edges.squash()
-        ts = tables.tree_sequence()
-        if simplify:
-            ts = ts.simplify()
-        
-        return ts
+        return self.finalise(tables, nodes, simplify)
 
-
-@dataclasses.dataclass
-class Individual:
-    id: int = -1
-    lineages: List[Lineage] = dataclasses.field(default_factory=list)
-    collected_lineages: List[List[Lineage]] = dataclasses.field(
-        default_factory=lambda: [[], []]
-    )
-
-
-class IntervalSet:
-    """
-    Naive and simple implementation of discrete intervals.
-    """
-
-    def __init__(self, L, tuples=None):
-        assert int(L) == L
-        self.I = np.zeros(int(L), dtype=int)
-        if tuples is not None:
-            for left, right in tuples:
-                self.insert(left, right)
-
-    def __str__(self):
-        return str(self.I)
-
-    def __repr__(self):
-        return repr(list(self.I))
-
-    def __eq__(self, other):
-        return np.array_equal(self.I == 0, other.I == 0)
-
-    def insert(self, left, right):
-        assert int(left) == left
-        assert int(right) == right
-        self.I[int(left) : int(right)] = 1
-
-    def contains(self, x):
-        assert int(x) == x
-        return self.I[int(x)] != 0
-
-    def union(self, other):
+    def _sim_zeng(self, simplify=True):
         """
-        Returns a new IntervalSet with the union of intervals in this and
-        other.
-        """
-        new = IntervalSet(self.I.shape[0])
-        assert other.I.shape == self.I.shape
-        new.I[:] = np.logical_or(self.I, other.I)
-        return new
+        Simulate under the model described by Zeng and Charlesworth 2011
 
-    def intersection(self, other):
+        NOTE! This hasn't been statistically tested and is probably not correct.
         """
-        Returns a new IntervalSet with the intersection of intervals in this and
-        other.
-        """
-        new = IntervalSet(self.I.shape[0])
-        assert other.I.shape == self.I.shape
-        new.I[:] = np.logical_and(self.I, other.I)
-        return new
+        rng = np.random.default_rng(self.rng.random.randint())
+        tables = tskit.TableCollection(self.L)
+        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        nodes = []
+        for _ in range(self.n * self.ploidy):
+            num_mutations = rng.poisson()
+            segment_chain = [AncestryInterval(0, self.L, 1, num_mutations)]
+            self.insert_lineage(Lineage(len(nodes), segment_chain))
+            nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
-    def is_subset(self, other):
-        """
-        Return True if this set is a subset of other.
-        """
-        a = np.all(other.I[self.I == 1] == 1)
-        b = np.all(self.I[other.I == 0] == 0)
-        return a and b
+        t = 0
+        while not self.fully_coalesced():
+            lineage_links = [
+                lineage.num_recombination_links for lineage in self.lineages
+            ]
+            total_links = sum(lineage_links)
+            re_rate = total_links * self.r
+            t_re = math.inf if re_rate == 0 else self.rng.expovariate(re_rate)
+            t_ca = self.common_ancestor_waiting_time()
+            t_inc = min(t_re, t_ca)
+            t += t_inc
 
+            if t_inc == t_re:  # recombination
+                left_lineage = self.rng.choices(self.lineages, weights=lineage_links)[0]
+                breakpoint = self.rng.randrange(
+                    left_lineage.left + 1, left_lineage.right
+                )
+                assert left_lineage.left < breakpoint < left_lineage.right
+                right_lineage = left_lineage.split(breakpoint, self.B)
+                self.insert_lineage(right_lineage)
+                child = left_lineage.node
+                assert right_lineage.node == child
 
-@dataclasses.dataclass
-class RecombinationEvent:
-    parent_edges: List[tskit.Edge] = dataclasses.field(default_factory=list)
-    child_edge: tskit.Edge | None = None
+            else:  # common ancestor event
+                a = self.remove_lineage(self.rng.randrange(self.num_lineages))
+                b = self.remove_lineage(self.rng.randrange(self.num_lineages))
+                c = Lineage(len(nodes), [])
+                for interval, intersecting_lineages in merge_ancestry([a, b]):
+                    # if interval.ancestral_to < n:
+                    c.ancestry.append(interval)
+                    for lineage in intersecting_lineages:
+                        tables.edges.add_row(
+                            interval.left, interval.right, c.node, lineage.node
+                        )
+
+                nodes.append(Node(time=t))
+                self.insert_lineage(c)
+
+        return self.finalise(tables, nodes, simplify)
