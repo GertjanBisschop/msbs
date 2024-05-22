@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import random
 import math
 import dataclasses
@@ -39,7 +37,7 @@ class Lineage:
 
     node: int
     ancestry: List[AncestryInterval]
-    b: float = 1.0
+    value: float = 1.0
 
     def __str__(self):
         s = f"{self.node}:["
@@ -98,10 +96,8 @@ class Lineage:
                 if right == b_map.position[j]:
                     j += 1
                 left = right
-        if cumspan == 0:
-            print(self)
-        assert cumspan > 0
-        self.b = b / cumspan
+
+        self.value = b / cumspan
 
     def split(self, breakpoint, b_map):
         """
@@ -236,13 +232,38 @@ class BMap(RateMap):
 
 
 @dataclasses.dataclass
-class Simulator:
+class SuperSimulator:
     L: float
     r: float
     n: int
     Ne: float
     ploidy: int = 2
     seed: int = None
+
+    def stop_condition(self):
+        n = self.n * self.ploidy
+        for lineage in self.lineages:
+            for segment in lineage.ancestry:
+                if segment.ancestral_to < n:
+                    return False
+        return True
+
+    def finalise(self, tables, nodes, simplify):
+        for node in nodes:
+            tables.nodes.add_row(
+                flags=node.flags, time=node.time, metadata=node.metadata
+            )
+        tables.sort()
+        tables.edges.squash()
+        ts = tables.tree_sequence()
+        if simplify:
+            ts = ts.simplify()
+
+        return ts
+
+
+@dataclasses.dataclass
+class Simulator(SuperSimulator):
     B: BMap = None
     s: float = None
     model: str = "localne"
@@ -280,20 +301,15 @@ class Simulator:
         self.lineages.append(lineage)
         self.num_lineages += 1
 
-    def fully_coalesced(self):
+    def stop_condition(self):
         """
         Returns True if all segments are ancestral to n samples in all
         lineages.
         """
         if self.model == "zeng":
-            pass
+            return False
         else:
-            n = self.n * self.ploidy
-            for lineage in self.lineages:
-                for segment in lineage.ancestry:
-                    if segment.ancestral_to < n:
-                        return False
-        return True
+            return super().stop_condition()
 
     def run(self, simplify=True):
         if self.model == "localne":
@@ -303,19 +319,6 @@ class Simulator:
             return self._sim_zeng(simplify)
         else:
             raise ValueError("Model not implemented.")
-
-    def finalise(self, tables, nodes, simplify):
-        for node in nodes:
-            tables.nodes.add_row(
-                flags=node.flags, time=node.time, metadata=node.metadata
-            )
-        tables.sort()
-        tables.edges.squash()
-        ts = tables.tree_sequence()
-        if simplify:
-            ts = ts.simplify()
-
-        return ts
 
     def _sim_local_ne(self, simplify=True):
         """
@@ -334,14 +337,14 @@ class Simulator:
             nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
         t = 0
-        while not self.fully_coalesced():
+        while not self.stop_condition():
             lineage_links = [
                 lineage.num_recombination_links for lineage in self.lineages
             ]
             total_links = sum(lineage_links)
             re_rate = total_links * self.r
             t_re = math.inf if re_rate == 0 else self.rng.expovariate(re_rate)
-            self.coal_rates = [1 / lineage.b for lineage in self.lineages]
+            self.coal_rates = [1 / lineage.value for lineage in self.lineages]
             t_ca = self.common_ancestor_waiting_time()
             t_inc = min(t_re, t_ca)
             t += t_inc
@@ -388,7 +391,7 @@ class Simulator:
 
         NOTE! This hasn't been statistically tested and is probably not correct.
         """
-        rng = np.random.default_rng(self.rng.random.randint())
+        rng = np.random.default_rng(self.rng.randint(1, 2**16))
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         nodes = []
