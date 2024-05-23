@@ -29,3 +29,12 @@ class TestSimBins:
         sim = bins.BinSimulator(L, r, n, Ne, seed=seed)
         ts = sim.run()
         assert True
+
+    def test_recombination(self):
+        rng = np.random.default_rng(10)
+        alist = [ancestry.AncestryInterval(19, 30, 0)]
+        left = bins.BinLineage(0, alist, 10)
+        left.set_bins(10, 10, rng)
+        pre_split = left.bins.copy()
+        right = left.split(20, 10, 10, rng)
+        assert np.all(np.hstack([left.bins[:2], right.bins[2:]]) == pre_split)
