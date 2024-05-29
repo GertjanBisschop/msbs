@@ -82,7 +82,7 @@ class BinLineage(ancestry.Lineage):
 
 @dataclasses.dataclass
 class BinSimulator(ancestry.SuperSimulator):
-    U: float = 5e-2  # number of mutations per generation per ind
+    U: float = 2.5e-1  # number of mutations per generation per ind
     s: float = 0.01
     num_bins: int = 10
 
@@ -208,9 +208,9 @@ class BinSimulator(ancestry.SuperSimulator):
             t_mut = self.rng.expovariate(self.s * num_mutations)
             t_inc = min(t_re, t_ca, t_mut)
             t += t_inc
-            print(re_rate, np.sum(coal_rates), self.s * num_mutations)
+            
             if t_inc == t_re:  # recombination
-                print("recombination")
+                #print("----------recombination-----------")
                 left_lineage = self.rng.choices(self.lineages, weights=lineage_links)[0]
                 breakpoint = self.rng.randrange(
                     left_lineage.left + 1, left_lineage.right
@@ -223,13 +223,12 @@ class BinSimulator(ancestry.SuperSimulator):
                 child = left_lineage.node
                 assert right_lineage.node == child
             elif t_inc == t_ca:  # common ancestor event
-                print("ca_event")
+                #print("---------ca_event---------")
                 _ = self.common_ancestor_event(coal_rates, tables, len(nodes))
                 nodes.append(ancestry.Node(time=t))
 
             else:  # mutation
-                print("mutation")
+                #print("---------mutation---------")
                 self.mutation_event(num_mutations)
-            break
 
         return self.finalise(tables, nodes, simplify)

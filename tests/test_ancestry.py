@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import msbs.ancestry as ancestry
 import msbs.bins as bins
+import msbs.zeng as zeng
 
 class TestSimAncestry:
     def test_simple(self):
@@ -26,9 +27,9 @@ class TestSimBins:
         Ne = 10_000
         seed = 12
         
-        sim = bins.BinSimulator(L, r, n, Ne, seed=seed)
+        sim = bins.BinSimulator(L, r, n, Ne, seed=seed, num_bins=5)
         ts = sim.run()
-        assert True
+        assert False
 
     def test_recombination(self):
         rng = np.random.default_rng(10)
@@ -38,3 +39,66 @@ class TestSimBins:
         pre_split = left.bins.copy()
         right = left.split(20, 10, 10, rng)
         assert np.all(np.hstack([left.bins[:2], right.bins[2:]]) == pre_split)
+
+class TestSimZeng:
+    def test_recombination(self):
+        rng = np.random.default_rng(10)
+        alist = [ancestry.AncestryInterval(19, 30, 0)]
+        mean_load = 10
+        mutations = np.array([10, 1, 12, 9], dtype=np.int64)
+        breakpoints = np.array([0, 10, 20, 30, 100])
+
+        # split [0, 10, 20, 23, 100] [a, b, c, d]
+        # and [23, 30, 100] [x, y]
+
+        left = zeng.ZLineage(0, alist, np.sum(mutations), mutations, breakpoints)
+        left.set_fitness()
+        
+        right = left.split(23, mean_load, rng)
+        print(left.mutations, left.breakpoints)
+        print(right.mutations, right.breakpoints)
+        assert True
+
+    def test_recombination_b(self):
+        rng = np.random.default_rng(10)
+        alist = [ancestry.AncestryInterval(0, 100, 0)]
+        mean_load = 10
+        mutations = np.array([22], dtype=np.int64)
+        breakpoints = np.array([0, 100])
+        
+        left = zeng.ZLineage(0, alist, np.sum(mutations), mutations, breakpoints)
+        left.set_fitness()
+        
+        right = left.split(48, mean_load, rng)
+        print(left.mutations, left.breakpoints)
+        print(right.mutations, right.breakpoints)
+        assert False
+
+    def test_coalescing(self):
+        a = zeng.ZLineage(
+            0,
+            [],
+            1,
+            np.array([1, 0]),
+            np.array([0, 0.5, 1]),
+        )
+        b = zeng.ZLineage(
+            1,
+            [],
+            1,
+            np.array([0, 1]),
+            np.array([0, 0.25, 1]),
+        )
+        print(a.coalescing(b))
+        assert False
+
+    def test_simple(self):
+        L = 100
+        r = 0.1e-4
+        n = 4
+        Ne = 10_000
+        seed = 12
+        
+        sim = zeng.ZSimulator(L, r, n, Ne, seed=seed)
+        ts = sim.run()
+        assert False
