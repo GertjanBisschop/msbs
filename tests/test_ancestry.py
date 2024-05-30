@@ -49,15 +49,14 @@ class TestSimZeng:
         breakpoints = np.array([0, 10, 20, 30, 100])
 
         # split [0, 10, 20, 23, 100] [a, b, c, d]
-        # and [23, 30, 100] [x, y]
+        # and [0, 23, 30, 100] [x, y]
 
         left = zeng.ZLineage(0, alist, np.sum(mutations), mutations, breakpoints)
         left.set_fitness()
         
         right = left.split(23, mean_load, rng)
-        print(left.mutations, left.breakpoints)
-        print(right.mutations, right.breakpoints)
-        assert True
+        assert np.array_equal(left.breakpoints, np.array([0, 10, 20, 23, 100]))
+        assert np.array_equal(right.breakpoints, np.array([0, 23, 30, 100]))
 
     def test_recombination_b(self):
         rng = np.random.default_rng(10)
@@ -70,9 +69,9 @@ class TestSimZeng:
         left.set_fitness()
         
         right = left.split(48, mean_load, rng)
-        print(left.mutations, left.breakpoints)
-        print(right.mutations, right.breakpoints)
-        assert False
+        assert np.array_equal(left.breakpoints, np.array([0, 48, 100]))
+        assert left.mutations[0] + right.mutations[1] == 22
+        assert np.array_equal(right.breakpoints, np.array([0, 48, 100]))
 
     def test_coalescing(self):
         a = zeng.ZLineage(
@@ -89,8 +88,10 @@ class TestSimZeng:
             np.array([0, 1]),
             np.array([0, 0.25, 1]),
         )
-        print(a.coalescing(b))
-        assert False
+        bool_coal, c = a.coalescing(b)
+        assert bool_coal
+        assert np.array_equal(c.breakpoints, np.array([0, 0.25, 0.5, 1.0]))
+        assert np.array_equal(c.mutations, np.array([0, 1, 0]))
 
     def test_simple(self):
         L = 100

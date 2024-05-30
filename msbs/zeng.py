@@ -21,6 +21,7 @@ class ZLineage(ancestry.Lineage):
         assert self.mutations is not None
         assert self.breakpoints is not None
         self.value = np.sum(self.mutations)
+        assert self.value >= 0
         self.freq = self.prob_i()
 
     def prob_i(self):
@@ -47,27 +48,29 @@ class ZLineage(ancestry.Lineage):
         j = 0
         k = 0
         coalescing = True
-        
-        while (i<self.mutations.size) or (j < other.mutations.size):
+        other_mutations = other.mutations.copy()
+        self_mutations = self.mutations.copy()
+
+        while (i<self.mutations.size) or (j < other_mutations.size):
             x_tmp = 0
             y_tmp = 0
             if self.breakpoints[i+1] > other.breakpoints[j+1]:
                 x_tmp = other.breakpoints[j+1]
-                y_tmp = other.mutations[j]
-                self.mutations[i] -= y_tmp
+                y_tmp = other_mutations[j]
+                self_mutations[i] -= y_tmp
                 j += 1
             elif self.breakpoints[i+1] == other.breakpoints[j+1]:
                 x_tmp = other.breakpoints[j+1]
-                if self.mutations[i] == other.mutations[j]:
-                    y_tmp = other.mutations[j]
+                if self_mutations[i] == other_mutations[j]:
+                    y_tmp = other_mutations[j]
                 else:
                     y_tmp = -1
                 i += 1
                 j += 1
             else:
                 x_tmp = self.breakpoints[i+1]
-                y_tmp = self.mutations[i]
-                other.mutations[j] -= y_tmp
+                y_tmp = self_mutations[i]
+                other_mutations[j] -= y_tmp
                 i += 1
             
             if y_tmp < 0:
@@ -97,7 +100,7 @@ class ZLineage(ancestry.Lineage):
             elif interval.left >= bp:
                 right_ancestry.append(interval)
             else:
-                assert interval.left < breakpoint < interval.right
+                assert interval.left < bp < interval.right
                 left_ancestry.append(dataclasses.replace(interval, right=bp))
                 right_ancestry.append(dataclasses.replace(interval, left=bp))
         self.ancestry = left_ancestry
@@ -123,10 +126,13 @@ class ZLineage(ancestry.Lineage):
         width = self.breakpoints[i] - self.breakpoints[i-1]
         if new_breakpoint:
             to_divide = self.mutations[i - 1]
-            p = (bp - self.breakpoints[i-1])/width
-            mut_left = rng.binomial(to_divide, p=p)
+            p = (bp - self.breakpoints[i-1]) / width
+            mut_left = 0
+            if to_divide > 0:
+                mut_left = rng.binomial(to_divide, p=p)
             self.mutations[i-1] = mut_left
             right_lin.breakpoints[0] = bp
+            assert mut_left <= to_divide
             right_lin.mutations[0] = to_divide - mut_left
         
         k = i
@@ -157,22 +163,25 @@ class ZLineage(ancestry.Lineage):
         
         assert self.mutations.size == (self.breakpoints.size - 1)
         assert right_lin.mutations.size == (right_lin.breakpoints.size - 1)
-        return right_lin
         self.set_fitness()
         right_lin.set_fitness()
-
+        
         return right_lin
 
 
 @dataclasses.dataclass
 class ZSimulator(ancestry.SuperSimulator):
-    U: float = 2.5e-1  # number of mutations per generation per ind
+    U: float = 0.25e-1  # number of mutations per generation per ind
     s: float = 0.01
 
     def __post_init__(self):
         self.rng = random.Random(self.seed)
         self.lineages = []
         self.num_lineages = 0
+
+    def print_state(self):
+        for lin in self.lineages:
+            print(lin, lin.mutations, lin.value)
 
     def remove_lineage(self, lineage_id):
         lin = self.lineages.pop(lineage_id)
@@ -181,7 +190,9 @@ class ZSimulator(ancestry.SuperSimulator):
 
     def insert_lineage(self, lineage):
         self.lineages.append(lineage)
+        lineage.set_fitness()
         self.num_lineages += 1
+        assert lineage.value == np.sum(lineage.mutations)
 
     def mutation_event(self, total_mass):
         random_mass = self.rng.random()
@@ -190,25 +201,30 @@ class ZSimulator(ancestry.SuperSimulator):
             observed_mass += lineage.value / total_mass
             if observed_mass > random_mass:
                 break
-
+        
+        assert lineage.value > 0
+        assert np.sum(lineage.mutations > 0)
         random_index = self.rng.choices(range(lineage.mutations.size), weights=lineage.mutations)[0]
         lineage.mutations[random_index] -= 1        
         lineage.value -= 1
+        assert np.all(lineage.mutations >= 0)
+        self.test_lineages()
 
     def pairwise_coal_rate(self, child, sib, mean_mut):
         ret = 0.0
         assert child.freq > 0.0
         assert sib.freq > 0.0
+        child_value = child.value
         if child.value == sib.value:
             coal_bool, parent = child.coalescing(sib)
-            parent.set_fitness()
             if coal_bool:
+                parent_freq = parent.prob_i()
                 f_i = (
                     np.exp(-mean_mut)
                     * (mean_mut) ** child.value
                     / math.factorial(child.value)
                 )
-                ret = parent.freq / (f_i * child.freq * sib.freq)
+                ret = parent_freq / (f_i * child.freq * sib.freq)
 
         return ret / (self.ploidy * self.Ne)
 
@@ -246,7 +262,14 @@ class ZSimulator(ancestry.SuperSimulator):
         self.insert_lineage(c)
 
         return c
-
+    
+    def test_lineages(self):
+        for lin in self.lineages:
+            if lin.value != np.sum(lin.mutations):
+                return False
+        
+        return True
+            
     def run(self, simplify=True):
         return self._sim(simplify)
 
@@ -265,9 +288,11 @@ class ZSimulator(ancestry.SuperSimulator):
             lineage.set_fitness()
             self.insert_lineage(lineage)
             nodes.append(ancestry.Node(time=0, flags=tskit.NODE_IS_SAMPLE))
-
+        
         t = 0
         while not super().stop_condition():
+            self.print_state()
+            assert self.test_lineages()
             lineage_links = [
                 lineage.num_recombination_links for lineage in self.lineages
             ]
@@ -275,15 +300,14 @@ class ZSimulator(ancestry.SuperSimulator):
             re_rate = total_links * self.r
             t_re = math.inf if re_rate == 0 else self.rng.expovariate(re_rate)
             coal_rates = self.get_coal_rate(mean_preload)
-            print(coal_rates)
             t_ca = self.common_ancestor_waiting_time_from_rate(np.sum(coal_rates))
             num_mutations = sum(lin.value for lin in self.lineages)
             t_mut = self.rng.expovariate(self.s * num_mutations)
             t_inc = min(t_re, t_ca, t_mut)
             t += t_inc
-            
+
             if t_inc == t_re:  # recombination
-                #print("----------recombination-----------")
+                print("----------recombination-----------")
                 left_lineage = self.rng.choices(self.lineages, weights=lineage_links)[0]
                 breakpoint = self.rng.randrange(
                     left_lineage.left + 1, left_lineage.right
@@ -296,12 +320,12 @@ class ZSimulator(ancestry.SuperSimulator):
                 child = left_lineage.node
                 assert right_lineage.node == child
             elif t_inc == t_ca:  # common ancestor event
-                #print("---------ca_event---------")
+                print("---------ca_event---------")
                 _ = self.common_ancestor_event(coal_rates, tables, len(nodes))
                 nodes.append(ancestry.Node(time=t))
 
             else:  # mutation
-                #print("---------mutation---------")
+                print("---------mutation---------")
                 self.mutation_event(num_mutations)
 
         return self.finalise(tables, nodes, simplify)
