@@ -4,6 +4,7 @@ import msbs.ancestry as ancestry
 import msbs.bins as bins
 import msbs.zeng as zeng
 
+
 class TestSimAncestry:
     def test_simple(self):
         L = 100
@@ -11,12 +12,14 @@ class TestSimAncestry:
         n = 4
         Ne = 10_000
         seed = 12
-        b_map = ancestry.BMap(np.array([0, L//2, 3*L//4, L]), np.array([1.0, 0.01, 1.0]))
-        
+        b_map = ancestry.BMap(
+            np.array([0, L // 2, 3 * L // 4, L]), np.array([1.0, 0.01, 1.0])
+        )
+
         sim = ancestry.Simulator(L, r, n, Ne, seed=seed, B=b_map)
         ts = sim.run()
         assert ts.num_trees > 1
-        #ts.dump('bs.trees')
+        # ts.dump('bs.trees')
 
 
 class TestSimBins:
@@ -26,7 +29,7 @@ class TestSimBins:
         n = 4
         Ne = 10_000
         seed = 12
-        
+
         sim = bins.BinSimulator(L, r, n, Ne, seed=seed, num_bins=5)
         ts = sim.run()
         assert False
@@ -39,6 +42,7 @@ class TestSimBins:
         pre_split = left.bins.copy()
         right = left.split(20, 10, 10, rng)
         assert np.all(np.hstack([left.bins[:2], right.bins[2:]]) == pre_split)
+
 
 class TestSimZeng:
     def test_recombination(self):
@@ -53,7 +57,7 @@ class TestSimZeng:
 
         left = zeng.ZLineage(0, alist, np.sum(mutations), mutations, breakpoints)
         left.set_fitness()
-        
+
         right = left.split(23, mean_load, rng)
         assert np.array_equal(left.breakpoints, np.array([0, 10, 20, 23, 100]))
         assert np.array_equal(right.breakpoints, np.array([0, 23, 30, 100]))
@@ -64,10 +68,10 @@ class TestSimZeng:
         mean_load = 10
         mutations = np.array([22], dtype=np.int64)
         breakpoints = np.array([0, 100])
-        
+
         left = zeng.ZLineage(0, alist, np.sum(mutations), mutations, breakpoints)
         left.set_fitness()
-        
+
         right = left.split(48, mean_load, rng)
         assert np.array_equal(left.breakpoints, np.array([0, 48, 100]))
         assert left.mutations[0] + right.mutations[1] == 22
@@ -99,7 +103,8 @@ class TestSimZeng:
         n = 4
         Ne = 10_000
         seed = 12
-        
+
         sim = zeng.ZSimulator(L, r, n, Ne, seed=seed)
         ts = sim.run()
-        assert False
+        for tree in ts.trees():
+            assert tree.num_roots == 1
