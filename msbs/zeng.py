@@ -6,7 +6,7 @@ import numpy as np
 import tskit
 
 from msbs import ancestry
-from msbs import bins
+from msbs import utils
 
 
 @dataclasses.dataclass
@@ -237,7 +237,7 @@ class ZSimulator(ancestry.SuperSimulator):
         coal_rates = np.zeros(math.comb(self.num_lineages, 2))
         for pair in itertools.combinations(range(self.num_lineages), 2):
             a, b = pair
-            coal_rates[bins.combinadic_map(pair)] = self.pairwise_coal_rate(
+            coal_rates[utils.combinadic_map(pair)] = self.pairwise_coal_rate(
                 self.lineages[a], self.lineages[b], mean_mut
             )
 
@@ -251,7 +251,7 @@ class ZSimulator(ancestry.SuperSimulator):
 
     def common_ancestor_event(self, coal_rates, tables, node_id):
         i = self.rng.choices(range(coal_rates.size), weights=coal_rates)[0]
-        ai, bi = bins.reverse_combinadic_map(i)
+        ai, bi = utils.reverse_combinadic_map(i)
         a = self.remove_lineage(ai)
         b = self.remove_lineage(bi)
         coal_bool, c = a.coalescing(b)

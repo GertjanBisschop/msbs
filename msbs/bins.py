@@ -6,28 +6,7 @@ import numpy as np
 import tskit
 
 from msbs import ancestry
-
-
-def combinadic_map(sorted_pair):
-    """
-    Maps a pair of indices to a unique integer.
-    """
-    return int((sorted_pair[0]) + sorted_pair[1] * (sorted_pair[1] - 1) / 2)
-
-
-def reverse_combinadic_map(idx, k=2):
-    """
-    Maps a unique index to a unique pair.
-    """
-    while k > 0:
-        i = k - 1
-        num_combos = 0
-        while num_combos <= idx:
-            i += 1
-            num_combos = math.comb(i, k)
-        yield i - 1
-        idx -= math.comb(i - 1, k)
-        k -= 1
+from msbs import utils
 
 
 @dataclasses.dataclass
@@ -45,6 +24,7 @@ class BinLineage(ancestry.Lineage):
 
     def set_bins(self, mean_muts, num_bins, rng):
         self.bins = rng.poisson(mean_muts, num_bins)
+        print(self.bins)
 
     def split(self, breakpoint, mean_muts, binwidth, rng):
 
@@ -82,7 +62,7 @@ class BinLineage(ancestry.Lineage):
 
 @dataclasses.dataclass
 class BinSimulator(ancestry.SuperSimulator):
-    U: float = 2.5e-1  # number of mutations per generation per ind
+    U: float = 7.5e-2  # number of mutations per generation per ind
     s: float = 0.01
     num_bins: int = 10
 
@@ -101,6 +81,7 @@ class BinSimulator(ancestry.SuperSimulator):
 
     def insert_lineage(self, lineage):
         self.lineages.append(lineage)
+        lineage.set_value()
         self.num_lineages += 1
 
     def mutation_event(self, total_mass):
@@ -147,7 +128,7 @@ class BinSimulator(ancestry.SuperSimulator):
         coal_rates = np.zeros(math.comb(self.num_lineages, 2))
         for pair in itertools.combinations(range(self.num_lineages), 2):
             a, b = pair
-            coal_rates[combinadic_map(pair)] = self.pairwise_coal_rate(
+            coal_rates[utils.combinadic_map(pair)] = self.pairwise_coal_rate(
                 self.lineages[a], self.lineages[b], mean_mut
             )
 
@@ -161,7 +142,7 @@ class BinSimulator(ancestry.SuperSimulator):
 
     def common_ancestor_event(self, coal_rates, tables, node_id):
         i = self.rng.choices(range(coal_rates.size), weights=coal_rates)[0]
-        ai, bi = reverse_combinadic_map(i)
+        ai, bi = utils.reverse_combinadic_map(i)
         a = self.remove_lineage(ai)
         b = self.remove_lineage(bi)
         c = BinLineage(node_id, [], a.value)
@@ -205,8 +186,13 @@ class BinSimulator(ancestry.SuperSimulator):
             coal_rates = self.get_coal_rate(mean_preload)
             t_ca = self.common_ancestor_waiting_time_from_rate(np.sum(coal_rates))
             num_mutations = sum(lin.value for lin in self.lineages)
-            t_mut = self.rng.expovariate(self.s * num_mutations)
+            t_mut = (
+                math.inf
+                if num_mutations == 0
+                else self.rng.expovariate(self.s * num_mutations)
+            )
             t_inc = min(t_re, t_ca, t_mut)
+            assert t_inc < math.inf
             t += t_inc
 
             if t_inc == t_re:  # recombination

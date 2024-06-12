@@ -1,11 +1,12 @@
 import random
 import math
+import itertools
 import dataclasses
-from typing import List
-from typing import Any
-
 import numpy as np
 import tskit
+
+from typing import List, Any
+from msbs import utils
 
 
 @dataclasses.dataclass
@@ -122,6 +123,39 @@ class Lineage:
         right_lin = Lineage(self.node, right_ancestry)
 
         return right_lin
+
+    def intersect_lineages(self, other):
+        """
+        Returns list with the overlap between the ancestry intervals
+        of Lineages a and b.
+        """
+        n = len(self.ancestry)
+        m = len(other.ancestry)
+        i = j = 0
+        overlap = []
+        overlap_length = 0
+        while i < n and j < m:
+            if self.ancestry[i].right <= other.ancestry[j].left:
+                i += 1
+            elif self.ancestry[i].left >= other.ancestry[j].right:
+                j += 1
+            else:
+                left = max(self.ancestry[i].left, other.ancestry[j].left)
+                right = min(self.ancestry[i].right, other.ancestry[j].right)
+                overlap.append(
+                    AncestryInterval(
+                        left,
+                        right,
+                        self.ancestry[i].ancestral_to + other.ancestry[j].ancestral_to,
+                    )
+                )
+                overlap_length += right - left
+                if self.ancestry[i].right < other.ancestry[j].right:
+                    i += 1
+                else:
+                    j += 1
+
+        return (overlap, overlap_length)
 
 
 # The details of the machinery in the next two functions aren't important.
@@ -265,7 +299,6 @@ class SuperSimulator:
 @dataclasses.dataclass
 class Simulator(SuperSimulator):
     B: BMap = None
-    s: float = None
     model: str = "localne"
 
     def __post_init__(self):
@@ -306,17 +339,13 @@ class Simulator(SuperSimulator):
         Returns True if all segments are ancestral to n samples in all
         lineages.
         """
-        if self.model == "zeng":
-            return False
-        else:
-            return super().stop_condition()
+        return super().stop_condition()
 
     def run(self, simplify=True):
         if self.model == "localne":
             return self._sim_local_ne(simplify)
-        elif self.model == "zeng":
-            assert self.s is not None
-            return self._sim_zeng(simplify)
+        elif self.model == "overlap":
+            return self._sim_overlap(simplify)
         else:
             raise ValueError("Model not implemented.")
 
@@ -385,31 +414,36 @@ class Simulator(SuperSimulator):
 
         return self.finalise(tables, nodes, simplify)
 
-    def _sim_zeng(self, simplify=True):
+    def _sim_local_ne_overlap(self, simplify=True):
         """
-        Simulate under the model described by Zeng and Charlesworth 2011
-
+        Experimental implementation of coalescent with local Ne map along genome.
+        Compute coalescence time based on weighted mean of B-map in overlapping regions
         NOTE! This hasn't been statistically tested and is probably not correct.
         """
-        rng = np.random.default_rng(self.rng.randint(1, 2**16))
+
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         nodes = []
         for _ in range(self.n * self.ploidy):
-            num_mutations = rng.poisson()
-            segment_chain = [AncestryInterval(0, self.L, 1, num_mutations)]
+            segment_chain = [AncestryInterval(0, self.L, 1)]
             self.insert_lineage(Lineage(len(nodes), segment_chain))
             nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
         t = 0
-        while not self.fully_coalesced():
+        while not self.stop_condition():
             lineage_links = [
                 lineage.num_recombination_links for lineage in self.lineages
             ]
             total_links = sum(lineage_links)
             re_rate = total_links * self.r
             t_re = math.inf if re_rate == 0 else self.rng.expovariate(re_rate)
-            t_ca = self.common_ancestor_waiting_time()
+            # compute coal rate for each pair
+            self.coal_rates = np.zeros(math.comb(self.num_lineages, 2))
+            for pair in itertools.combinations(range(self.num_lineages), 2):
+                pair_idx = utils.combinadic_map(pair)
+                overlap = self.lineages[pair[0]].intersect(self.lineages[pair[1]])
+            ca_rate = np.sum(self.coal_rates)
+            t_ca = self.common_ancestor_waiting_time_from_rate(ca_rate)
             t_inc = min(t_re, t_ca)
             t += t_inc
 
@@ -425,8 +459,16 @@ class Simulator(SuperSimulator):
                 assert right_lineage.node == child
 
             else:  # common ancestor event
-                a = self.remove_lineage(self.rng.randrange(self.num_lineages))
-                b = self.remove_lineage(self.rng.randrange(self.num_lineages))
+                a = self.remove_lineage(
+                    self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[
+                        0
+                    ]
+                )
+                b = self.remove_lineage(
+                    self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[
+                        0
+                    ]
+                )
                 c = Lineage(len(nodes), [])
                 for interval, intersecting_lineages in merge_ancestry([a, b]):
                     # if interval.ancestral_to < n:

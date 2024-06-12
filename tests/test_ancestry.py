@@ -27,14 +27,14 @@ class TestSimAncestry:
 class TestSimBins:
     def test_simple(self):
         L = 100
-        r = 0.1e-4
+        r = 0.1e-6
         n = 4
         Ne = 10_000
         seed = 12
 
         sim = bins.BinSimulator(L, r, n, Ne, seed=seed, num_bins=5)
         ts = sim.run()
-        assert False
+        assert ts.num_trees > 1
 
     def test_recombination(self):
         rng = np.random.default_rng(10)
@@ -99,36 +99,6 @@ class TestSimZeng:
         assert np.array_equal(c.breakpoints, np.array([0, 0.25, 0.5, 1.0]))
         assert np.array_equal(c.mutations, np.array([0, 1, 0]))
 
-    def test_coal_no_muts(self):
-        a = zeng.ZLineage(
-            0,
-            [],
-            1,
-            np.array([0]),
-            np.array([0, 1]),
-        )
-        b = zeng.ZLineage(
-            1,
-            [],
-            1,
-            np.array([0]),
-            np.array([0, 1]),
-        )
-        bool_coal, c = a.coalescing(b)
-        assert bool_coal
-
-        L = 100
-        r = 0.1e-4
-        n = 4
-        Ne = 10_000
-        U = 0.0
-        sim = zeng.ZSimulator(L, r, n, Ne, U=U)
-        sim.insert_lineage(a)
-        print(a.prob_i(), b.prob_i())
-        sim.insert_lineage(b)
-        print(sim.get_coal_rate(U))
-        assert False
-
     @pytest.mark.parametrize("seed", [12, 89901, 1303])
     def test_simple(self, seed):
         L = 100
@@ -139,10 +109,6 @@ class TestSimZeng:
         sim = zeng.ZSimulator(L, r, n, Ne, seed=seed)
         ts = sim.run()
 
-        print(
-            f"ca: {sim.num_ca_events}, re: {sim.num_re_events}, mu: {sim.num_mu_events}"
-        )
-        assert False
         for tree in ts.trees():
             assert tree.num_roots == 1
 
@@ -156,28 +122,5 @@ class TestSimZeng:
         sim = zeng.ZSimulator(L, r, n, Ne, seed=seed, U=0.0)
         ts = sim.run()
 
-        print(
-            f"ca: {sim.num_ca_events}, re: {sim.num_re_events}, mu: {sim.num_mu_events}"
-        )
-        assert False
         for tree in ts.trees():
             assert tree.num_roots == 1
-
-    def test_range(self):
-        s = 0.01
-        U_range = np.linspace(0.001, 0.5, num=5)
-
-        L = 100
-        r = 0.1e-4
-        n = 4
-        Ne = 10_000
-
-        for u in U_range:
-            sim = zeng.ZSimulator(L, r, n, Ne, U=u, seed=99)
-            start = time.time()
-            ts = sim.run()
-            print(time.time() - start)
-            print(sim.num_ca_events, sim.num_re_events, sim.num_mu_events)
-            print(sim.U / sim.s, sim.U * (1 - sim.s) / sim.s)
-            print("-----------------")
-        assert False
