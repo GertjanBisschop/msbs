@@ -181,6 +181,9 @@ class ZSimulator(ancestry.SuperSimulator):
         self.rng = random.Random(self.seed)
         self.lineages = []
         self.num_lineages = 0
+        self.num_ca_events = 0
+        self.num_re_events = 0
+        self.num_mu_events = 0
 
     def print_state(self):
         for lin in self.lineages:
@@ -217,7 +220,6 @@ class ZSimulator(ancestry.SuperSimulator):
         ret = 0.0
         assert child.freq > 0.0
         assert sib.freq > 0.0
-        child_value = child.value
         if child.value == sib.value:
             coal_bool, parent = child.coalescing(sib)
             if coal_bool:
@@ -324,13 +326,16 @@ class ZSimulator(ancestry.SuperSimulator):
                 self.insert_lineage(right_lineage)
                 child = left_lineage.node
                 assert right_lineage.node == child
+                self.num_re_events += 1
             elif t_inc == t_ca:  # common ancestor event
                 # print("---------ca_event---------")
                 _ = self.common_ancestor_event(coal_rates, tables, len(nodes))
                 nodes.append(ancestry.Node(time=t))
+                self.num_ca_events += 1
 
             else:  # mutation
                 # print("---------mutation---------")
                 self.mutation_event(num_mutations)
+                self.num_mu_events += 1
 
         return self.finalise(tables, nodes, simplify)

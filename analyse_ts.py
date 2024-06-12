@@ -12,7 +12,6 @@ from collections.abc import Iterable
 from typing import Dict
 
 matplotlib.use("Agg")
-# import statsmodels.api as sm
 
 from msbs import ancestry
 
@@ -138,19 +137,6 @@ class Diversity(WindowStat):
         plt.close("all")
 
 
-"""
-def plot_qq(v1, v2, x_label, y_label, filename, stat_obj, info=""):
-    sm.graphics.qqplot(v1)
-    sm.qqplot_2samples(v1, v2, line="45")
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    plt.title(info)
-    f = stat_obj._build_filename(filename)
-    plt.savefig(f, dpi=120)
-    plt.close("all")
-"""
-
-
 def plot_histogram(x, x_label, filename, stat_obj):
     n, bins, patches = plt.hist(x, density=True, bins="auto")
     plt.xlabel(x_label)
@@ -190,7 +176,7 @@ def run_all(suite, output_dir, seed):
     b_map = ancestry.BMap(np.array([0, 500, 750, 1000]), np.array([1.0, 0.01, 1.0]))
     params = {"b_map": b_map}
 
-    for n in [4]:
+    for n in [2, 4]:
         print(f"[+] Running models for n={n}")
         all_stats = []
         S = TsStatRunner(num_reps, n, r, L, Ne, output_dir, seed, params)
