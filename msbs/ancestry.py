@@ -259,6 +259,21 @@ class RateMap:
             i += 1
         return ret
 
+    def intersect_lineage(self, ancestry):
+        total = 0
+
+        for interval in ancestry:
+            i = np.searchsorted(self.position, interval.left, side="right")
+            j = np.searchsorted(self.position, interval.right, side="right")
+
+            while i <= j:
+                left = max(interval.left, self.position[i - 1])
+                right = min(interval.right, self.position[i])
+                total += self.rate[i - 1] * (right - left)
+                i += 1
+
+        return total
+
 
 @dataclasses.dataclass
 class BMap(RateMap):
@@ -441,8 +456,14 @@ class Simulator(SuperSimulator):
             self.coal_rates = np.zeros(math.comb(self.num_lineages, 2))
             for pair in itertools.combinations(range(self.num_lineages), 2):
                 pair_idx = utils.combinadic_map(pair)
-                overlap = self.lineages[pair[0]].intersect(self.lineages[pair[1]])
+                overlap_ancestry, overlap = self.lineages[pair[0]].intersect(
+                    self.lineages[pair[1]]
+                )
+                self.coal_rates[pair_idx] = (
+                    self.B.intersect_lineage(overlap_ancestry) / overlap
+                )
             ca_rate = np.sum(self.coal_rates)
+            assert ca_rate > 0
             t_ca = self.common_ancestor_waiting_time_from_rate(ca_rate)
             t_inc = min(t_re, t_ca)
             t += t_inc
@@ -459,18 +480,15 @@ class Simulator(SuperSimulator):
                 assert right_lineage.node == child
 
             else:  # common ancestor event
-                a = self.remove_lineage(
-                    self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[
-                        0
-                    ]
-                )
-                b = self.remove_lineage(
-                    self.rng.choices(range(self.num_lineages), weights=self.coal_rates)[
-                        0
-                    ]
-                )
+                # pick lineages based on coal_rates
+                random_idx = self.rng.choices(
+                    range(self.coal_rates.size), weights=self.coal_rates
+                )[0]
+                a, b = utils.reverse_combinadic_map[random_idx]
                 c = Lineage(len(nodes), [])
-                for interval, intersecting_lineages in merge_ancestry([a, b]):
+                for interval, intersecting_lineages in merge_ancestry(
+                    [self.lineages[a], self.lineages[b]]
+                ):
                     # if interval.ancestral_to < n:
                     c.ancestry.append(interval)
                     for lineage in intersecting_lineages:
