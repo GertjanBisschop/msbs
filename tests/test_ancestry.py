@@ -24,6 +24,23 @@ class TestSimAncestry:
         # ts.dump('bs.trees')
 
 
+class TestSimOverlap:
+    @pytest.mark.parametrize("seed", [12])
+    def test_simple(self, seed):
+        L = 100
+        r = 0.1e-5
+        n = 4
+        Ne = 10_000
+
+        b_map = ancestry.BMap(
+            np.array([0, L // 2, 3 * L // 4, L]), np.array([1.0, 0.01, 1.0])
+        )
+
+        sim = ancestry.Simulator(L, r, n, Ne, seed=seed, B=b_map, model="overlap")
+        ts = sim.run()
+        assert ts.num_trees > 1
+
+
 class TestSimBins:
     def test_simple(self):
         L = 100

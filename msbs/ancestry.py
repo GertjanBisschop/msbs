@@ -124,7 +124,7 @@ class Lineage:
 
         return right_lin
 
-    def intersect_lineages(self, other):
+    def intersect(self, other):
         """
         Returns list with the overlap between the ancestry intervals
         of Lineages a and b.
@@ -266,7 +266,7 @@ class RateMap:
             i = np.searchsorted(self.position, interval.left, side="right")
             j = np.searchsorted(self.position, interval.right, side="right")
 
-            while i <= j:
+            while i <= j and i < self.position.size:
                 left = max(interval.left, self.position[i - 1])
                 right = min(interval.right, self.position[i])
                 total += self.rate[i - 1] * (right - left)
@@ -325,6 +325,11 @@ class Simulator(SuperSimulator):
         self.lineages = []
         self.num_lineages = 0
 
+    def print_state(self):
+        for lineage in self.lineages:
+            print(lineage)
+        print("------------------------")
+
     def common_ancestor_waiting_time_from_rate(self, rate):
         u = self.rng.expovariate(rate)
         # incorporate info from B-map
@@ -360,7 +365,7 @@ class Simulator(SuperSimulator):
         if self.model == "localne":
             return self._sim_local_ne(simplify)
         elif self.model == "overlap":
-            return self._sim_overlap(simplify)
+            return self._sim_local_ne_overlap(simplify)
         else:
             raise ValueError("Model not implemented.")
 
@@ -446,6 +451,7 @@ class Simulator(SuperSimulator):
 
         t = 0
         while not self.stop_condition():
+            self.print_state()
             lineage_links = [
                 lineage.num_recombination_links for lineage in self.lineages
             ]
@@ -459,13 +465,15 @@ class Simulator(SuperSimulator):
                 overlap_ancestry, overlap = self.lineages[pair[0]].intersect(
                     self.lineages[pair[1]]
                 )
-                self.coal_rates[pair_idx] = (
-                    self.B.intersect_lineage(overlap_ancestry) / overlap
-                )
+                if overlap > 0:
+                    self.coal_rates[pair_idx] = (
+                        self.B.intersect_lineage(overlap_ancestry) / overlap
+                    )
             ca_rate = np.sum(self.coal_rates)
             assert ca_rate > 0
             t_ca = self.common_ancestor_waiting_time_from_rate(ca_rate)
             t_inc = min(t_re, t_ca)
+            assert t_inc < math.inf
             t += t_inc
 
             if t_inc == t_re:  # recombination
@@ -484,12 +492,13 @@ class Simulator(SuperSimulator):
                 random_idx = self.rng.choices(
                     range(self.coal_rates.size), weights=self.coal_rates
                 )[0]
-                a, b = utils.reverse_combinadic_map[random_idx]
+                coal_pair = [
+                    self.remove_lineage(lin_idx)
+                    for lin_idx in utils.reverse_combinadic_map(random_idx)
+                ]
                 c = Lineage(len(nodes), [])
-                for interval, intersecting_lineages in merge_ancestry(
-                    [self.lineages[a], self.lineages[b]]
-                ):
-                    # if interval.ancestral_to < n:
+                for interval, intersecting_lineages in merge_ancestry(coal_pair):
+
                     c.ancestry.append(interval)
                     for lineage in intersecting_lineages:
                         tables.edges.add_row(
