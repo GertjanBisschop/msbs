@@ -73,34 +73,10 @@ class Lineage:
         """
         return self.ancestry[-1].right
 
-    def set_b(self, b_map):
-        b = 0.0
-        cumspan = 0.0
-        m = len(self.ancestry)
-        n = len(b_map.rate)
-        i = 0  # interval index
-        j = 1  # b_map index
-        left = 0
+    def set_value(self, map):
+        self.value = map.get(self)
 
-        while i < m:
-            left = max(self.ancestry[i].left, left)
-            if left >= b_map.position[j]:
-                if j < n:
-                    j += 1
-            else:
-                right = min(b_map.position[j], self.ancestry[i].right)
-                span = right - left
-                b += b_map.rate[j - 1] * span
-                cumspan += span
-                if right == self.ancestry[i].right:
-                    i += 1
-                if right == b_map.position[j]:
-                    j += 1
-                left = right
-
-        self.value = b / cumspan
-
-    def split(self, breakpoint, b_map):
+    def split(self, breakpoint, map):
         """
         Splits the ancestral material for this lineage at the specified
         breakpoint, and returns a second lineage with the ancestral
@@ -119,7 +95,7 @@ class Lineage:
                 left_ancestry.append(dataclasses.replace(interval, right=breakpoint))
                 right_ancestry.append(dataclasses.replace(interval, left=breakpoint))
         self.ancestry = left_ancestry
-        self.set_b(b_map)
+        self.set_value(map)
         right_lin = Lineage(self.node, right_ancestry)
 
         return right_lin
@@ -234,14 +210,6 @@ class Node:
     metadata: dict = dataclasses.field(default_factory=dict)
 
 
-def pairwise_products(v: np.ndarray):
-    assert len(v.shape) == 1
-    n = v.shape[0]
-    m = v.reshape(n, 1) @ v.reshape(1, n)
-
-    return m[np.tril_indices_from(m, k=-1)].ravel()
-
-
 @dataclasses.dataclass
 class RateMap:
     position: np.ndarray
@@ -277,8 +245,37 @@ class RateMap:
 
 @dataclasses.dataclass
 class BMap(RateMap):
-    pass
+    def get(self, lineage):
+        b = 0.0
+        cumspan = 0.0
+        m = len(lineage.ancestry)
+        n = len(self.rate)
+        i = 0  # interval index
+        j = 1  # b_map index
+        left = 0
 
+        while i < m:
+            left = max(lineage.ancestry[i].left, left)
+            if left >= self.position[j]:
+                if j < n:
+                    j += 1
+            else:
+                right = min(self.position[j], lineage.ancestry[i].right)
+                span = right - left
+                b += self.rate[j - 1] * span
+                cumspan += span
+                if right == lineage.ancestry[i].right:
+                    i += 1
+                if right == self.position[j]:
+                    j += 1
+                left = right
+
+        return b / cumspan
+
+@dataclasses.dataclass
+class FitnessClassMap(RateMap):
+    def get(lineage):
+        return None
 
 @dataclasses.dataclass
 class SuperSimulator:
@@ -338,7 +335,7 @@ class Simulator(SuperSimulator):
     def common_ancestor_waiting_time(self):
         # perform all pairwise weighted contributions
         n = self.num_lineages
-        rate = np.sum(pairwise_products(np.array(self.coal_rates)))
+        rate = np.sum(utils.pairwise_products(np.array(self.coal_rates)))
         return self.common_ancestor_waiting_time_from_rate(rate)
 
     def remove_lineage(self, lineage_id):
@@ -350,7 +347,7 @@ class Simulator(SuperSimulator):
 
     def insert_lineage(self, lineage):
         if self.model == "localne":
-            lineage.set_b(self.B)
+            lineage.set_value(self.B)
         self.lineages.append(lineage)
         self.num_lineages += 1
 
@@ -451,7 +448,6 @@ class Simulator(SuperSimulator):
 
         t = 0
         while not self.stop_condition():
-            self.print_state()
             lineage_links = [
                 lineage.num_recombination_links for lineage in self.lineages
             ]
@@ -467,7 +463,7 @@ class Simulator(SuperSimulator):
                 )
                 if overlap > 0:
                     self.coal_rates[pair_idx] = (
-                        self.B.intersect_lineage(overlap_ancestry) / overlap
+                        overlap / self.B.intersect_lineage(overlap_ancestry)
                     )
             ca_rate = np.sum(self.coal_rates)
             assert ca_rate > 0

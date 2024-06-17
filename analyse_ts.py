@@ -31,7 +31,7 @@ class TsStatRunner:
     def __post_init__(self):
         self.info_str = f"L_{self.sequence_length}_r_{self.r}"
         self.set_output_dir()
-        self.models = ["localne", "hudson"]
+        self.models = ["localne", "hudson", "overlap"]
         self.rng = np.random.default_rng(self.seed)
 
     def set_output_dir(self):
@@ -106,7 +106,8 @@ class WindowStat:
 
     def __post_init__(self):
         self.set_output_dir()
-        self.windows = np.array([0, 500, 750, 1000])
+        L = self.runner.params['L']
+        self.windows = np.array([0, 1/2*L, 3/4*L, L])
 
     @property
     def name(self):
@@ -132,7 +133,8 @@ class Diversity(WindowStat):
         mean_a = np.mean(a, axis=1)
         for i in range(mean_a.shape[0]):
             f = self._build_filename("stairs_")
-            plt.stairs(mean_a[i], self.windows)
+            plt.stairs(mean_a[i], self.windows, label=self.runner.models[i])
+        plt.legend(loc="upper right")
         plt.savefig(f, dpi=120)
         plt.close("all")
 
@@ -170,11 +172,11 @@ def plot_line(a, b, x_label, y_label, filename, stat_obj):
 
 def run_all(suite, output_dir, seed):
     L = 1000
-    r = 1e-6
+    r = 7.5e-7
     num_reps = 100
     Ne = 10_000
-    b_map = ancestry.BMap(np.array([0, 500, 750, 1000]), np.array([1.0, 0.01, 1.0]))
-    params = {"b_map": b_map}
+    b_map = ancestry.BMap(np.array([0, 1/2*L, 3/4*L, L]), np.array([1.0, 0.01, 1.0]))
+    params = {"b_map": b_map, "L": L}
 
     for n in [2, 4]:
         print(f"[+] Running models for n={n}")

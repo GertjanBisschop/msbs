@@ -3,8 +3,7 @@ import numpy as np
 import msbs.ancestry as ancestry
 import msbs.bins as bins
 import msbs.zeng as zeng
-
-import time
+import msbs.fitnessclass as fitnessclass
 
 
 class TestSimAncestry:
@@ -25,10 +24,10 @@ class TestSimAncestry:
 
 
 class TestSimOverlap:
-    @pytest.mark.parametrize("seed", [12])
+    @pytest.mark.parametrize("seed", [12, 445343, 1930])
     def test_simple(self, seed):
         L = 100
-        r = 0.1e-5
+        r = 7.5e-7
         n = 4
         Ne = 10_000
 
@@ -141,3 +140,22 @@ class TestSimZeng:
 
         for tree in ts.trees():
             assert tree.num_roots == 1
+
+
+#class TestSimFitnessClass:
+#    @pytest.mark.parametrize("seed", [12, 445343, 1930])
+#    def test_simple(self, seed):
+#        L = 100
+#        r = 7.5e-7
+#        n = 4
+#        Ne = 10_000
+#
+#        b_map = ancestry.BMap(
+#            np.array([0, L // 2, 3 * L // 4, L]), np.array([1.0, 0.01, 1.0])
+#        )
+#
+#        sim = fitnessclass.Simulator(
+#            L, r, n, Ne, seed=seed, B=b_map
+#        )
+#        ts = sim.run()
+#        assert ts.num_trees > 1
