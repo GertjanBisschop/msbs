@@ -1,6 +1,8 @@
 import math
 import numpy as np
 
+from scipy.special import gammaln
+
 
 def combinadic_map(sorted_pair):
     """
@@ -23,9 +25,14 @@ def reverse_combinadic_map(idx, k=2):
         idx -= math.comb(i - 1, k)
         k -= 1
 
+
 def pairwise_products(v: np.ndarray):
     assert len(v.shape) == 1
     n = v.shape[0]
     m = v.reshape(n, 1) @ v.reshape(1, n)
 
     return m[np.tril_indices_from(m, k=-1)].ravel()
+
+def poisson_pmf(x, mu):
+    out = -mu + x * np.log(mu) - gammaln(x + 1)
+    return np.exp(out)

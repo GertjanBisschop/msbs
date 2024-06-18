@@ -106,8 +106,8 @@ class WindowStat:
 
     def __post_init__(self):
         self.set_output_dir()
-        L = self.runner.params['L']
-        self.windows = np.array([0, 1/2*L, 3/4*L, L])
+        L = self.runner.params["L"]
+        self.windows = np.array([0, 1 / 2 * L, 3 / 4 * L, L])
 
     @property
     def name(self):
@@ -175,7 +175,9 @@ def run_all(suite, output_dir, seed):
     r = 7.5e-7
     num_reps = 100
     Ne = 10_000
-    b_map = ancestry.BMap(np.array([0, 1/2*L, 3/4*L, L]), np.array([1.0, 0.01, 1.0]))
+    b_map = ancestry.BMap(
+        np.array([0, 1 / 2 * L, 3 / 4 * L, L]), np.array([1.0, 0.01, 1.0])
+    )
     params = {"b_map": b_map, "L": L}
 
     for n in [2, 4]:

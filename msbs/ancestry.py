@@ -41,7 +41,7 @@ class Lineage:
     value: float = 1.0
 
     def __str__(self):
-        s = f"{self.node}:["
+        s = f"{self.node}: {self.value} ["
         for interval in self.ancestry:
             s += str(
                 (interval.left, interval.right, interval.ancestral_to, interval.value)
@@ -76,7 +76,7 @@ class Lineage:
     def set_value(self, map):
         self.value = map.get(self)
 
-    def split(self, breakpoint, map):
+    def split(self, breakpoint):
         """
         Splits the ancestral material for this lineage at the specified
         breakpoint, and returns a second lineage with the ancestral
@@ -95,7 +95,6 @@ class Lineage:
                 left_ancestry.append(dataclasses.replace(interval, right=breakpoint))
                 right_ancestry.append(dataclasses.replace(interval, left=breakpoint))
         self.ancestry = left_ancestry
-        self.set_value(map)
         right_lin = Lineage(self.node, right_ancestry)
 
         return right_lin
@@ -219,12 +218,38 @@ class RateMap:
     uniform RateMap(position=[0, sequence_length], rate=[rate])
     """
 
-    def weighted_average(self):
-        ret = 0
+    def weighted_average(self, left=0.0, right=None, normalise=True, total=False):
+        if right is None:
+            right = self.position[-1]
+
+        # Ensure left and right are within the bounds of position
+        left = max(left, self.position[0])
+        right = min(right, self.position[-1])
+
+        ret = 0.0
+        total_length = 0.0
         i = 0
+
         while i < self.rate.size:
-            ret += (self.position[i + 1] - self.position[i]) * self.rate[i]
+            segment_start = max(left, self.position[i])
+            segment_end = min(right, self.position[i + 1])
+
+            if segment_start < segment_end:
+                segment_length = segment_end - segment_start
+                ret += segment_length * self.rate[i]
+                total_length += segment_length
+
+            if self.position[i + 1] >= right:
+                break
             i += 1
+
+        if total_length == 0.0:
+            return 0.0
+        if normalise:
+            if total:
+                total_length = self.position[-1]
+            ret /= total_length
+
         return ret
 
     def intersect_lineage(self, ancestry):
@@ -272,10 +297,17 @@ class BMap(RateMap):
 
         return b / cumspan
 
+
 @dataclasses.dataclass
 class FitnessClassMap(RateMap):
-    def get(lineage):
-        return None
+    def __post_init__(self):
+        self.av = self.weighted_average()
+
+    def get(self, lineage, left=0.0, right=None):
+        left = max(left, self.position[0])
+        right = min(right, self.position[-1])
+        return self.weighted_average(left, right)
+
 
 @dataclasses.dataclass
 class SuperSimulator:
@@ -378,8 +410,7 @@ class Simulator(SuperSimulator):
         nodes = []
         for _ in range(self.n * self.ploidy):
             segment_chain = [AncestryInterval(0, self.L, 1)]
-            b_value = self.B.weighted_average()
-            self.insert_lineage(Lineage(len(nodes), segment_chain, b_value))
+            self.insert_lineage(Lineage(len(nodes), segment_chain))
             nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
         t = 0
@@ -401,7 +432,8 @@ class Simulator(SuperSimulator):
                     left_lineage.left + 1, left_lineage.right
                 )
                 assert left_lineage.left < breakpoint < left_lineage.right
-                right_lineage = left_lineage.split(breakpoint, self.B)
+                right_lineage = left_lineage.split(breakpoint)
+                left_lineage.set_value(self.B)
                 self.insert_lineage(right_lineage)
                 child = left_lineage.node
                 assert right_lineage.node == child
@@ -462,8 +494,8 @@ class Simulator(SuperSimulator):
                     self.lineages[pair[1]]
                 )
                 if overlap > 0:
-                    self.coal_rates[pair_idx] = (
-                        overlap / self.B.intersect_lineage(overlap_ancestry)
+                    self.coal_rates[pair_idx] = overlap / self.B.intersect_lineage(
+                        overlap_ancestry
                     )
             ca_rate = np.sum(self.coal_rates)
             assert ca_rate > 0
@@ -478,7 +510,7 @@ class Simulator(SuperSimulator):
                     left_lineage.left + 1, left_lineage.right
                 )
                 assert left_lineage.left < breakpoint < left_lineage.right
-                right_lineage = left_lineage.split(breakpoint, self.B)
+                right_lineage = left_lineage.split(breakpoint)
                 self.insert_lineage(right_lineage)
                 child = left_lineage.node
                 assert right_lineage.node == child

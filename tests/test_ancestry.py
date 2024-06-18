@@ -142,20 +142,36 @@ class TestSimZeng:
             assert tree.num_roots == 1
 
 
-#class TestSimFitnessClass:
-#    @pytest.mark.parametrize("seed", [12, 445343, 1930])
-#    def test_simple(self, seed):
-#        L = 100
-#        r = 7.5e-7
-#        n = 4
-#        Ne = 10_000
-#
-#        b_map = ancestry.BMap(
-#            np.array([0, L // 2, 3 * L // 4, L]), np.array([1.0, 0.01, 1.0])
-#        )
-#
-#        sim = fitnessclass.Simulator(
-#            L, r, n, Ne, seed=seed, B=b_map
-#        )
-#        ts = sim.run()
-#        assert ts.num_trees > 1
+class TestSimFitnessClass:
+    @pytest.mark.parametrize(
+        "left, right, exp",
+        [
+            (5, 22, 84 / 17),
+            (10, 20, 1),
+            (29, 31, 21 / 2),
+        ],
+    )
+    def test_weighted_av(self, left, right, exp):
+        positions = np.array([0, 10, 20, 30, 100])
+        rates = np.array([10, 1, 12, 9], dtype=np.int64)
+        fm = ancestry.FitnessClassMap(positions, rates)
+        obs = fm.weighted_average(left, right)
+        assert exp == obs
+
+
+    @pytest.mark.parametrize("seed", [12, 445343, 1930])
+    def test_simple(self, seed):
+        L = 100
+        r = 7.5e-7
+        n = 4
+        Ne = 10_000
+
+        k_map = ancestry.FitnessClassMap(
+            np.array([0, L // 2, 3 * L // 4, L]), np.array([1.0, 0.01, 1.0])
+        )
+
+        sim = fitnessclass.Simulator(
+            L, r, n, Ne, seed=seed, K=k_map
+        )
+        ts = sim.run()
+        assert ts.num_trees > 1
