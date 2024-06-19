@@ -10,6 +10,7 @@ from scipy.linalg import expm
 from msbs import ancestry
 from msbs import utils
 
+
 @dataclasses.dataclass
 class Simulator(ancestry.SuperSimulator):
     K: ancestry.FitnessClassMap = None
@@ -28,9 +29,12 @@ class Simulator(ancestry.SuperSimulator):
         self.num_lineages = np.zeros(self.num_fitness_classes, dtype=np.int64)
         self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
         self.lineages = []
-        
+
     def __str__(self):
-        return super().__str__ () + f'\nmin fitness: {self.min_fitness}, num classes: {self.num_fitness_classes}'
+        return (
+            super().__str__()
+            + f"\nmin fitness: {self.min_fitness}, num classes: {self.num_fitness_classes}"
+        )
 
     def print_state(self, last_event):
         print(f"------------{last_event} event-------------")
@@ -110,7 +114,7 @@ class Simulator(ancestry.SuperSimulator):
         rng = np.random.default_rng(self.rng.randrange(2**16))
         load_g = self.U / self.s
         freqs = np.eye(self.num_fitness_classes)
-        last_event = 'in'
+        last_event = "in"
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
             k = self.adjust_fitness_class(rng.poisson(self.mean_load))
@@ -144,7 +148,7 @@ class Simulator(ancestry.SuperSimulator):
             for idx in range(self.num_fitness_classes):
                 ca_rate[idx] += np.sum(self.num_lineages * freqs[:, idx])
                 k = idx + self.min_fitness
-                hk = utils.poisson_pmf(k, load_g) 
+                hk = utils.poisson_pmf(k, load_g)
                 hk = 1.0
                 temp = self.common_ancestor_waiting_time_from_rate(ca_rate[idx], hk)
                 if temp < t_ca:
@@ -156,7 +160,7 @@ class Simulator(ancestry.SuperSimulator):
             t += t_inc
 
             if t_inc == t_re:  # recombination
-                last_event = 're'
+                last_event = "re"
                 left_lineage = self.rng.choices(self.lineages, weights=lineage_links)[0]
                 breakpoint = self.rng.randrange(
                     left_lineage.left + 1, left_lineage.right
@@ -170,18 +174,19 @@ class Simulator(ancestry.SuperSimulator):
                 p = left_av / self.K.av
                 k = rng.binomial(left_lin_k, p=p)
                 right_lineage = left_lineage.split(breakpoint)
-                right_lineage.value = left_lin_k - k
+                left_lineage.value = k
                 left_lineage.value += rng.poisson(self.mean_load * (1 - p))
                 left_lineage.value = self.adjust_fitness_class(left_lineage.value)
+                self.num_lineages[left_lineage.value] += 1
+                right_lineage.value = left_lin_k - k
                 right_lineage.value += rng.poisson(self.mean_load * p)
                 right_lineage.value = self.adjust_fitness_class(right_lineage.value)
                 self.insert_lineage(right_lineage)
-                self.num_lineages[left_lineage.value] += 1
                 child = left_lineage.node
                 assert right_lineage.node == child
 
             else:  # common ancestor event
-                last_event = 'ca'     
+                last_event = "ca"
                 # given ca_event in ca_population pick two random lineages a,b
                 # that could have coalesced in that fitness class
                 class_rate = self.num_lineages * freqs[:, ca_class]
@@ -204,5 +209,5 @@ class Simulator(ancestry.SuperSimulator):
                 self.insert_lineage(c)
 
             assert self.verify(last_event)
-        
+
         return self.finalise(tables, nodes, simplify)

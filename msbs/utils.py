@@ -33,6 +33,7 @@ def pairwise_products(v: np.ndarray):
 
     return m[np.tril_indices_from(m, k=-1)].ravel()
 
+
 def poisson_pmf(x, mu):
     out = -mu + x * np.log(mu) - gammaln(x + 1)
     return np.exp(out)

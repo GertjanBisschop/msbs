@@ -158,7 +158,6 @@ class TestSimFitnessClass:
         obs = fm.weighted_average(left, right)
         assert exp == obs
 
-
     @pytest.mark.parametrize("seed", [12, 445343, 1930])
     def test_simple(self, seed):
         L = 100
@@ -169,8 +168,6 @@ class TestSimFitnessClass:
         k_map = ancestry.FitnessClassMap(
             np.array([0, L // 2, 3 * L // 4, L]), np.array([1.0, 0.01, 1.0])
         )
-        sim = fitnessclass.Simulator(
-            L, r, n, Ne, seed=seed, K=k_map
-        )
+        sim = fitnessclass.Simulator(L, r, n, Ne, seed=seed, K=k_map)
         ts = sim.run(debug=True)
         assert ts.num_trees > 1
