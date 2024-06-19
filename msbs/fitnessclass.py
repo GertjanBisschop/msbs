@@ -6,7 +6,6 @@ import numpy as np
 import tskit
 
 from scipy.linalg import expm
-from typing import List
 
 from msbs import ancestry
 from msbs import utils
@@ -26,17 +25,35 @@ class Simulator(ancestry.SuperSimulator):
         self.mean_load = self.U * (1 - self.s) / self.s
         self.Q = self.generate_q()
         self.num_fitness_classes = self.Q.shape[0]
-        self.num_lineages = np.zeros(self.num_fitness_classes, dtype=np.uint64)
+        self.num_lineages = np.zeros(self.num_fitness_classes, dtype=np.int64)
         self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
         self.lineages = []
-        self.lineage_dict = collections.defaultdict(List)
+        
+    def __str__(self):
+        return super().__str__ () + f'\nmin fitness: {self.min_fitness}, num classes: {self.num_fitness_classes}'
 
-    def print_state(self):
+    def print_state(self, last_event):
+        print(f"------------{last_event} event-------------")
+        print(self.num_lineages)
         for lineage in self.lineages:
             print(lineage)
-        print("------------------------")
+        print("-----------------------------------")
+
+    def verify(self, last_event):
+        no_error = True
+        if np.any(self.num_lineages < 0):
+            no_error = False
+        test = np.zeros_like(self.num_lineages)
+        for lin in self.lineages:
+            test[lin.value] += 1
+            no_error = np.array_equal(test, self.num_lineages)
+        if not no_error:
+            self.print_state(last_event)
+        return no_error
 
     def common_ancestor_waiting_time_from_rate(self, rate, scaling=1.0):
+        if rate == 0.0:
+            return math.inf
         u = self.rng.expovariate(rate)
         return self.ploidy * self.Ne * u * scaling
 
@@ -60,7 +77,8 @@ class Simulator(ancestry.SuperSimulator):
 
     def remove_lineage_within_class(self, class_id):
         mask = [lin.value == class_id for lin in self.lineages]
-        lin = self.rng.choices(self.lineages, weights=mask)[0]
+        lin_idx = self.rng.choices(range(len(self.lineages)), weights=mask)[0]
+        lin = self.lineages.pop(lin_idx)
         self.num_lineages[lin.value] -= 1
         return lin
 
@@ -75,22 +93,24 @@ class Simulator(ancestry.SuperSimulator):
     def stop_condition(self):
         return super().stop_condition()
 
-    def run(self, simplify=True):
-        return self._sim(simplify)
+    def run(self, simplify=True, debug=False):
+        return self._sim(simplify, debug)
 
-    def _sim(self, simplify=True):
+    def _sim(self, simplify, debug):
         """
         Experimental implementation of coalescent with local Ne map along genome.
 
         NOTE! This hasn't been statistically tested and is probably not correct.
         """
-
+        if debug:
+            print(self)
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         nodes = []
         rng = np.random.default_rng(self.rng.randrange(2**16))
         load_g = self.U / self.s
         freqs = np.eye(self.num_fitness_classes)
+        last_event = 'in'
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
             k = self.adjust_fitness_class(rng.poisson(self.mean_load))
@@ -104,6 +124,8 @@ class Simulator(ancestry.SuperSimulator):
             self.ploidy * self.Ne / math.comb(np.sum(self.num_lineages), 2),
         )
         while not self.stop_condition():
+            if debug:
+                self.print_state(last_event)
             lineage_links = [
                 lineage.num_recombination_links for lineage in self.lineages
             ]
@@ -122,7 +144,7 @@ class Simulator(ancestry.SuperSimulator):
             for idx in range(self.num_fitness_classes):
                 ca_rate[idx] += np.sum(self.num_lineages * freqs[:, idx])
                 k = idx + self.min_fitness
-                #hk = utils.poisson_pmf(k, load_g) 
+                hk = utils.poisson_pmf(k, load_g) 
                 hk = 1.0
                 temp = self.common_ancestor_waiting_time_from_rate(ca_rate[idx], hk)
                 if temp < t_ca:
@@ -134,7 +156,7 @@ class Simulator(ancestry.SuperSimulator):
             t += t_inc
 
             if t_inc == t_re:  # recombination
-                print("----------recombination-----------")
+                last_event = 're'
                 left_lineage = self.rng.choices(self.lineages, weights=lineage_links)[0]
                 breakpoint = self.rng.randrange(
                     left_lineage.left + 1, left_lineage.right
@@ -143,9 +165,10 @@ class Simulator(ancestry.SuperSimulator):
                 # adjust fitness class left and right lineage
                 left_av = self.K.weighted_average(0.0, left_lineage.right, total=True)
                 # fitness class value is normalised
+                self.num_lineages[left_lineage.value] -= 1
                 left_lin_k = left_lineage.value + self.min_fitness
                 p = left_av / self.K.av
-                k = rng.binomial(left_lin_k, p=p) # error: n < 0
+                k = rng.binomial(left_lin_k, p=p)
                 right_lineage = left_lineage.split(breakpoint)
                 right_lineage.value = left_lin_k - k
                 left_lineage.value += rng.poisson(self.mean_load * (1 - p))
@@ -153,11 +176,12 @@ class Simulator(ancestry.SuperSimulator):
                 right_lineage.value += rng.poisson(self.mean_load * p)
                 right_lineage.value = self.adjust_fitness_class(right_lineage.value)
                 self.insert_lineage(right_lineage)
+                self.num_lineages[left_lineage.value] += 1
                 child = left_lineage.node
                 assert right_lineage.node == child
 
             else:  # common ancestor event
-                print("------------ca_event-------------")     
+                last_event = 'ca'     
                 # given ca_event in ca_population pick two random lineages a,b
                 # that could have coalesced in that fitness class
                 class_rate = self.num_lineages * freqs[:, ca_class]
@@ -179,4 +203,6 @@ class Simulator(ancestry.SuperSimulator):
                 nodes.append(ancestry.Node(time=t))
                 self.insert_lineage(c)
 
+            assert self.verify(last_event)
+        
         return self.finalise(tables, nodes, simplify)
