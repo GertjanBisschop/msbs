@@ -23,12 +23,14 @@ class Simulator(ancestry.SuperSimulator):
             position = np.zeros(2)
             position[-1] = self.L
             self.K = ancestry.FitnessClassMap(position, np.zeros(1))
+        num_sig = 2  # number of standard deviation for distribution
         self.mean_load = self.U * (1 - self.s) / self.s
-        self.Q = self.generate_q()
-        self.num_fitness_classes = self.Q.shape[0]
+        self.num_fitness_classes = 2 * math.ceil(num_sig * math.sqrt(self.mean_load))
         self.num_lineages = np.zeros(self.num_fitness_classes, dtype=np.int64)
         self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
+        self.Q = self.generate_q()
         self.lineages = []
+        self.info = collections.defaultdict(list)
 
     def __str__(self):
         return (
@@ -54,22 +56,25 @@ class Simulator(ancestry.SuperSimulator):
         if not no_error:
             self.print_state(last_event)
         return no_error
+    
+    def gather_info(self, t, ca_rate):
+        self.info['ca_rate'].append((t, np.sum(ca_rate) / (self.ploidy * self.Ne)))
 
-    def common_ancestor_waiting_time_from_rate(self, rate, scaling=1.0):
+    def common_ancestor_waiting_time_from_rate(self, rate):
         if rate == 0.0:
             return math.inf
         u = self.rng.expovariate(rate)
-        return self.ploidy * self.Ne * u * scaling
+        return self.ploidy * self.Ne * u
 
-    def generate_q(self, num_sig=2):
+    def generate_q(self):
         """
         Generates rate matrix to transition from class i to j.
         Gaining or losing a mutation happens at rate s
         """
-        num_fit_classes = 2 * math.ceil(num_sig * math.sqrt(self.mean_load))
-        Q = np.zeros((num_fit_classes, num_fit_classes))
-        Q += np.eye(num_fit_classes, k=-1)
-        Q *= self.s
+        Q = np.zeros((self.num_fitness_classes, self.num_fitness_classes))
+        Q += np.eye(self.num_fitness_classes, k=-1)
+        # Q_ij = i * s
+        Q *= self.s * (np.arange(1, self.num_fitness_classes + 1) + self.min_fitness)
         Q[np.diag_indices(Q.shape[0])] = -np.sum(Q, axis=1)
 
         return Q
@@ -127,6 +132,7 @@ class Simulator(ancestry.SuperSimulator):
             1 / (self.L * np.sum(self.num_lineages) * self.r),
             self.ploidy * self.Ne / math.comb(np.sum(self.num_lineages), 2),
         )
+        ca_rate = np.zeros(self.num_fitness_classes)
         while not self.stop_condition():
             if debug:
                 self.print_state(last_event)
@@ -142,18 +148,19 @@ class Simulator(ancestry.SuperSimulator):
             # waiting time while updating the freqs vector.
             t_ca = math.inf
             # ideally we reset freqs at the beginning of the second loop / after first event
-            freqs = expm(self.Q * delta_t) @ freqs.T
-            ca_rate = np.zeros(self.num_fitness_classes)
+            freqs = expm(self.Q * delta_t) @ freqs
             ca_class = None
             for idx in range(self.num_fitness_classes):
-                ca_rate[idx] += np.sum(self.num_lineages * freqs[:, idx])
+                ca_rate[idx] = np.sum(self.num_lineages * freqs[:, idx])
                 k = idx + self.min_fitness
+                # sum of hks does not equal 0 as we are not summing over all possible hks!
                 hk = utils.poisson_pmf(k, load_g)
-                hk = 1.0
-                temp = self.common_ancestor_waiting_time_from_rate(ca_rate[idx], hk)
+                ca_rate[idx] /= hk
+                temp = self.common_ancestor_waiting_time_from_rate(ca_rate[idx])
                 if temp < t_ca:
                     t_ca = temp
                     ca_class = idx
+            self.gather_info(t, ca_rate)
 
             t_inc = min(t_re, t_ca)
             delta_t = t_inc

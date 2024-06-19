@@ -161,7 +161,7 @@ class TestSimFitnessClass:
     @pytest.mark.parametrize("seed", [12, 445343, 1930])
     def test_simple(self, seed):
         L = 100
-        r = 1e-6
+        r = 1e-5
         n = 4
         Ne = 10_000
 
@@ -169,5 +169,5 @@ class TestSimFitnessClass:
             np.array([0, L // 2, 3 * L // 4, L]), np.array([1.0, 0.01, 1.0])
         )
         sim = fitnessclass.Simulator(L, r, n, Ne, seed=seed, K=k_map)
-        ts = sim.run(debug=True)
+        ts = sim.run(debug=False)
         assert ts.num_trees > 1

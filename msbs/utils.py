@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import scipy.stats
 
 from scipy.special import gammaln
 
@@ -37,3 +38,6 @@ def pairwise_products(v: np.ndarray):
 def poisson_pmf(x, mu):
     out = -mu + x * np.log(mu) - gammaln(x + 1)
     return np.exp(out)
+
+def poisson_cmf(x, mu):
+    return scipy.stats.poisson.cdf(x, mu)
