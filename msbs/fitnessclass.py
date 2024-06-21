@@ -6,9 +6,27 @@ import numpy as np
 import tskit
 
 from scipy.linalg import expm
+from typing import Callable
 
 from msbs import ancestry
 from msbs import utils
+
+
+def fk(Q: np.ndarray, I: np.ndarray, k: int, num_lins_vec: np.ndarray) -> Callable:
+    """
+    Returns a function that gives the instantaneous coalescence
+    rate at time `time` in class `k` given the rate matrix `Q`
+    and the number of lineages `num_lins_vec` present in
+    each fitness class.
+    """
+
+    def _fk(time: float) -> float:
+        freqs = I @ expm(Q * time)
+        freqs_k = np.sum(num_lins_vec * freqs[:, k])
+
+        return max(0, freqs_k * (freqs_k - 1) / 2)
+
+    return _fk
 
 
 @dataclasses.dataclass
@@ -29,6 +47,7 @@ class Simulator(ancestry.SuperSimulator):
         self.num_lineages = np.zeros(self.num_fitness_classes, dtype=np.int64)
         self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
         self.Q = self.generate_q()
+        self.coal_rate_fs = [fk(self.Q, i) for i in range(self.Q.shape[0])]
         self.lineages = []
         self.info = collections.defaultdict(list)
 
@@ -56,9 +75,6 @@ class Simulator(ancestry.SuperSimulator):
         if not no_error:
             self.print_state(last_event)
         return no_error
-    
-    def gather_info(self, t, ca_rate):
-        self.info['ca_rate'].append((t, np.sum(ca_rate) / (self.ploidy * self.Ne)))
 
     def common_ancestor_waiting_time_from_rate(self, rate):
         if rate == 0.0:
@@ -117,8 +133,12 @@ class Simulator(ancestry.SuperSimulator):
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         nodes = []
         rng = np.random.default_rng(self.rng.randrange(2**16))
+        I = np.eye(sim.Q.shape[0])
         load_g = self.U / self.s
-        freqs = np.eye(self.num_fitness_classes)
+        hk_probs = np.zeros(self.Q.shape[0])
+        hk_probs /= np.sum(hk_probs)
+        for k in range(hk_probs.size):
+            hk_probs = utils.poisson_pmf(k, load_g)
         last_event = "in"
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
@@ -127,12 +147,6 @@ class Simulator(ancestry.SuperSimulator):
             nodes.append(ancestry.Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
         t = 0
-        # given rec_rate and num_lineages, expected time to first event in absence of bs is:
-        delta_t = min(
-            1 / (self.L * np.sum(self.num_lineages) * self.r),
-            self.ploidy * self.Ne / math.comb(np.sum(self.num_lineages), 2),
-        )
-        ca_rate = np.zeros(self.num_fitness_classes)
         while not self.stop_condition():
             if debug:
                 self.print_state(last_event)
@@ -142,25 +156,19 @@ class Simulator(ancestry.SuperSimulator):
             total_links = sum(lineage_links)
             re_rate = total_links * self.r
             t_re = math.inf if re_rate == 0 else self.rng.expovariate(re_rate)
-            # assuming for now that ca_rate is constant in between events
-            # and informed by the previous time step
-            # alternatively, we could treat ca_rate as non-homogeneous and draw
-            # waiting time while updating the freqs vector.
             t_ca = math.inf
-            # ideally we reset freqs at the beginning of the second loop / after first event
-            freqs = expm(self.Q * delta_t) @ freqs
+            coal_rate_fs = [
+                fk(self.Q, I, i, self.num_lineages) for i in range(self.Q.shape[0])
+            ]
             ca_class = None
             for idx in range(self.num_fitness_classes):
-                ca_rate[idx] = np.sum(self.num_lineages * freqs[:, idx])
+                # draw waiting time for fitness class `idx`
+                temp = utils.sample_nhpp(coal_rate_fs[idx], self.rng)
                 k = idx + self.min_fitness
-                # sum of hks does not equal 0 as we are not summing over all possible hks!
-                hk = utils.poisson_pmf(k, load_g)
-                ca_rate[idx] /= hk
-                temp = self.common_ancestor_waiting_time_from_rate(ca_rate[idx])
+                temp *= self.ploidy * self.Ne * hk_probs[idx]
                 if temp < t_ca:
                     t_ca = temp
                     ca_class = idx
-            self.gather_info(t, ca_rate)
 
             t_inc = min(t_re, t_ca)
             delta_t = t_inc
@@ -181,6 +189,7 @@ class Simulator(ancestry.SuperSimulator):
                 p = left_av / self.K.av
                 k = rng.binomial(left_lin_k, p=p)
                 right_lineage = left_lineage.split(breakpoint)
+                # adjust fitness class of new left and right segments post rec
                 left_lineage.value = k
                 left_lineage.value += rng.poisson(self.mean_load * (1 - p))
                 left_lineage.value = self.adjust_fitness_class(left_lineage.value)
@@ -196,6 +205,7 @@ class Simulator(ancestry.SuperSimulator):
                 last_event = "ca"
                 # given ca_event in ca_population pick two random lineages a,b
                 # that could have coalesced in that fitness class
+                freqs = I @ expm(Q * delta_t)
                 class_rate = self.num_lineages * freqs[:, ca_class]
                 # sample a and b given weights in class_rate
                 class_idxs = rng.choice(
