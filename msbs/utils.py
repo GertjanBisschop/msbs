@@ -4,7 +4,7 @@ import random
 import scipy.stats
 
 from scipy.special import gammaln
-from typing import Callable, Tuple, Iterable
+from typing import Callable, Tuple, Iterable, Generator
 
 
 def combinadic_map(sorted_pair: Iterable) -> Tuple:
@@ -14,7 +14,7 @@ def combinadic_map(sorted_pair: Iterable) -> Tuple:
     return int((sorted_pair[0]) + sorted_pair[1] * (sorted_pair[1] - 1) / 2)
 
 
-def reverse_combinadic_map(idx: int, k=2) -> int:
+def reverse_combinadic_map(idx: int, k=2) -> Generator[int, int, int]:
     """
     Maps a unique index to a unique pair.
     """
@@ -55,6 +55,8 @@ def sample_nhpp(rate_f: Callable, rng: random.Random, start_time=0, jump=0.1) ->
     """
     upper_t_interval = jump + start_time
     sup_rate = rate_f(upper_t_interval)
+    if sup_rate == 0:
+        return math.inf
     new_time = start_time
     w = rng.expovariate(sup_rate)
 
@@ -71,6 +73,8 @@ def sample_nhpp(rate_f: Callable, rng: random.Random, start_time=0, jump=0.1) ->
             upper_t_interval += jump
             old_sup_rate = sup_rate
             sup_rate = rate_f(upper_t_interval)
+            if sup_rate == 0:
+                return math.inf
             w = adjust_w * old_sup_rate / sup_rate
 
     return new_time

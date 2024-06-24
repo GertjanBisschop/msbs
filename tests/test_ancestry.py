@@ -161,7 +161,7 @@ class TestSimFitnessClass:
     @pytest.mark.parametrize("seed", [12, 445343, 1930])
     def test_simple(self, seed):
         L = 100
-        r = 1e-5
+        r = 5e-7
         n = 4
         Ne = 10_000
 

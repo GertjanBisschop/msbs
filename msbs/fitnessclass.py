@@ -47,7 +47,6 @@ class Simulator(ancestry.SuperSimulator):
         self.num_lineages = np.zeros(self.num_fitness_classes, dtype=np.int64)
         self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
         self.Q = self.generate_q()
-        self.coal_rate_fs = [fk(self.Q, i) for i in range(self.Q.shape[0])]
         self.lineages = []
         self.info = collections.defaultdict(list)
 
@@ -133,12 +132,12 @@ class Simulator(ancestry.SuperSimulator):
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         nodes = []
         rng = np.random.default_rng(self.rng.randrange(2**16))
-        I = np.eye(sim.Q.shape[0])
+        I = np.eye(self.Q.shape[0])
         load_g = self.U / self.s
         hk_probs = np.zeros(self.Q.shape[0])
-        hk_probs /= np.sum(hk_probs)
         for k in range(hk_probs.size):
-            hk_probs = utils.poisson_pmf(k, load_g)
+            hk_probs[k] = utils.poisson_pmf(k, load_g)
+        hk_probs /= np.sum(hk_probs)
         last_event = "in"
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
@@ -205,7 +204,7 @@ class Simulator(ancestry.SuperSimulator):
                 last_event = "ca"
                 # given ca_event in ca_population pick two random lineages a,b
                 # that could have coalesced in that fitness class
-                freqs = I @ expm(Q * delta_t)
+                freqs = I @ expm(self.Q * delta_t)
                 class_rate = self.num_lineages * freqs[:, ca_class]
                 # sample a and b given weights in class_rate
                 class_idxs = rng.choice(
