@@ -318,6 +318,9 @@ class SuperSimulator:
     ploidy: int = 2
     seed: int = None
 
+    def __post_init__(self):
+        pass
+
     def stop_condition(self):
         n = self.n * self.ploidy
         for lineage in self.lineages:
@@ -338,6 +341,10 @@ class SuperSimulator:
             ts = ts.simplify()
 
         return ts
+
+    def reset(self, seed=None):
+        self.seed = seed
+        self.__post_init__()
 
 
 @dataclasses.dataclass

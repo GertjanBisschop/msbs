@@ -14,6 +14,7 @@ from typing import Dict
 matplotlib.use("Agg")
 
 from msbs import ancestry
+from msbs import fitnessclass
 
 
 @dataclasses.dataclass
@@ -57,11 +58,33 @@ class TsStatRunner:
             stat.plot(a[:, i, :, : stat.size])
 
     def _run_single_model(self, model, a, T):
-        single_run = (
-            self._run_msprime(model)
-            if model in {"hudson", "smc"}
-            else self._run_simulator(model)
-        )
+        self.params["model"] = model
+        if model in {"hudson", "smc"}:
+            single_run = self._run_msprime()
+        elif model in {"localne", "overlap"}:
+            simulator = ancestry.Simulator(
+                L=self.sequence_length,
+                r=self.r,
+                n=self.samples,
+                Ne=self.Ne,
+                B=self.params["b_map"],
+                model=self.params["model"],
+            )
+            single_run = self._run_simulator(simulator)
+        elif model == "fitnessclass":
+            simulator = fitnessclass.Simulator(
+                L=self.sequence_length,
+                r=self.r,
+                n=self.samples,
+                Ne=self.Ne,
+                K=self.params["k_map"],
+                U=self.params["U"],
+                s=self.params["s"],
+            )
+            single_run = self._run_simulator(simulator)
+        else:
+            raise ValueError
+
         for j, ts in enumerate(single_run):
             ts = ts.simplify()
             for i, stat in enumerate(T):
@@ -71,22 +94,15 @@ class TsStatRunner:
         max_seed = 2**16
         return self.rng.integers(1, max_seed, size=self.num_reps)
 
-    def _run_simulator(self, model):
+    def _run_simulator(self, simulator):
         seeds = self.get_seeds()
-        for seed in tqdm(seeds, desc=f"Running {model}"):
-            sim = ancestry.Simulator(
-                L=self.sequence_length,
-                r=self.r,
-                n=self.samples,
-                Ne=self.Ne,
-                seed=seed,
-                model=model,
-                B=self.params["b_map"],
-            )
-            yield sim.run()
+        for seed in tqdm(seeds, desc=f"Running {self.params['model']}"):
+            simulator.reset()
+            yield simulator.run()
 
-    def _run_msprime(self, model):
+    def _run_msprime(self):
         seeds = self.get_seeds()
+        model = self.params["model"]
         for seed in tqdm(seeds, desc=f"Running {model}"):
             yield msprime.sim_ancestry(
                 samples=self.samples,
@@ -139,6 +155,27 @@ class Diversity(WindowStat):
         plt.close("all")
 
 
+class SFS(WindowStat):
+    def compute(self, ts):
+        sfs = ts.allele_frequency_spectrum(
+            sample_sets=None,
+            windows=self.windows,
+            mode="branch",
+            span_normalise=True,
+            polarised=True,
+        )
+        return sfs[:, 1] / np.sum(sfs, axis=-1)
+
+    def plot(self, a):
+        mean_a = np.mean(a, axis=1)
+        for i in range(mean_a.shape[0]):
+            f = self._build_filename("stairs_")
+            plt.stairs(mean_a[i], self.windows, label=self.runner.models[i])
+        plt.legend(loc="upper right")
+        plt.savefig(f, dpi=120)
+        plt.close("all")
+
+
 def plot_histogram(x, x_label, filename, stat_obj):
     n, bins, patches = plt.hist(x, density=True, bins="auto")
     plt.xlabel(x_label)
@@ -178,7 +215,10 @@ def run_all(suite, output_dir, seed):
     b_map = ancestry.BMap(
         np.array([0, 1 / 2 * L, 3 / 4 * L, L]), np.array([1.0, 0.01, 1.0])
     )
-    params = {"b_map": b_map, "L": L}
+    k_map = None
+    u = 2e-3
+    s = 1e-3
+    params = {"b_map": b_map, "L": L, "k_map": k_map, "u": u, "s": s}
 
     for n in [2, 4]:
         print(f"[+] Running models for n={n}")
@@ -192,9 +232,7 @@ def run_all(suite, output_dir, seed):
 
 def main():
     parser = argparse.ArgumentParser()
-    choices = [
-        "Diversity",
-    ]
+    choices = ["Diversity", "SFS"]
 
     parser.add_argument(
         "--methods",

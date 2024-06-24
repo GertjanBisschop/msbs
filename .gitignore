@@ -127,3 +127,6 @@ dmypy.json
 
 # Output folders
 *_output*/
+
+# Analysis scripts
+*_scripts*/
