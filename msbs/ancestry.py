@@ -368,7 +368,6 @@ class Simulator(SuperSimulator):
 
     def common_ancestor_waiting_time_from_rate(self, rate):
         u = self.rng.expovariate(rate)
-        # incorporate info from B-map
         return self.ploidy * self.Ne * u
 
     def common_ancestor_waiting_time(self):

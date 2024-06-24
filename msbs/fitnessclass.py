@@ -122,7 +122,8 @@ class Simulator(ancestry.SuperSimulator):
 
     def _sim(self, simplify, debug):
         """
-        Experimental implementation of coalescent with local Ne map along genome.
+        Experimental implementation of coalescent with background selection
+        using the fitness class coalescent [Kaplan and Hudson].
 
         NOTE! This hasn't been statistically tested and is probably not correct.
         """
