@@ -46,6 +46,23 @@ def poisson_cmf(x: float, mu: float) -> float:
     return scipy.stats.poisson.cdf(x, mu)
 
 
+def zero_sup_rate(
+    rate_f: Callable, rng: random.Random, upper_t: float, jump: float = 0.1
+) -> Tuple:
+    """
+    This is a slow solution to the issue of sometimes having a very low event rate.
+    """
+    sup_rate = rate_f(upper_t)
+    i = 0
+    while sup_rate == 0 and i < 10:
+        jump *= 10
+        upper_t += jump
+        sup_rate = rate_f(upper_t)
+        i += 1
+
+    return sup_rate, upper_t
+
+
 def sample_nhpp(rate_f: Callable, rng: random.Random, start_time=0, jump=0.1) -> float:
     """
     Algorithm to draw the first interevent time for a
@@ -56,7 +73,9 @@ def sample_nhpp(rate_f: Callable, rng: random.Random, start_time=0, jump=0.1) ->
     upper_t_interval = jump + start_time
     sup_rate = rate_f(upper_t_interval)
     if sup_rate == 0:
-        return math.inf
+        sup_rate, upper_t_interval = zero_sup_rate(rate_f, rng, upper_t_interval)
+        if sup_rate == 0:
+            return math.inf
     new_time = start_time
     w = rng.expovariate(sup_rate)
 
@@ -74,7 +93,11 @@ def sample_nhpp(rate_f: Callable, rng: random.Random, start_time=0, jump=0.1) ->
             old_sup_rate = sup_rate
             sup_rate = rate_f(upper_t_interval)
             if sup_rate == 0:
-                return math.inf
+                sup_rate, upper_t_interval = zero_sup_rate(
+                    rate_f, rng, upper_t_interval
+                )
+                if sup_rate == 0:
+                    return math.inf
             w = adjust_w * old_sup_rate / sup_rate
 
     return new_time

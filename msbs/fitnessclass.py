@@ -40,7 +40,7 @@ class Simulator(ancestry.SuperSimulator):
         if self.K is None:
             position = np.zeros(2)
             position[-1] = self.L
-            self.K = ancestry.FitnessClassMap(position, np.zeros(1))
+            self.K = ancestry.FitnessClassMap(position, np.ones(1))
         num_sig = 2  # number of standard deviation for distribution
         self.mean_load = self.U * (1 - self.s) / self.s
         self.num_fitness_classes = 2 * math.ceil(num_sig * math.sqrt(self.mean_load))
@@ -164,7 +164,6 @@ class Simulator(ancestry.SuperSimulator):
             for idx in range(self.num_fitness_classes):
                 # draw waiting time for fitness class `idx`
                 temp = utils.sample_nhpp(coal_rate_fs[idx], self.rng)
-                k = idx + self.min_fitness
                 temp *= self.ploidy * self.Ne * hk_probs[idx]
                 if temp < t_ca:
                     t_ca = temp
@@ -191,10 +190,12 @@ class Simulator(ancestry.SuperSimulator):
                 right_lineage = left_lineage.split(breakpoint)
                 # adjust fitness class of new left and right segments post rec
                 left_lineage.value = k
+                # TODO: incorporate B-map info here
                 left_lineage.value += rng.poisson(self.mean_load * (1 - p))
                 left_lineage.value = self.adjust_fitness_class(left_lineage.value)
                 self.num_lineages[left_lineage.value] += 1
                 right_lineage.value = left_lin_k - k
+                # TODO: incorporate B-map info here
                 right_lineage.value += rng.poisson(self.mean_load * p)
                 right_lineage.value = self.adjust_fitness_class(right_lineage.value)
                 self.insert_lineage(right_lineage)
@@ -208,11 +209,22 @@ class Simulator(ancestry.SuperSimulator):
                 freqs = I @ expm(self.Q * delta_t)
                 class_rate = self.num_lineages * freqs[:, ca_class]
                 # sample a and b given weights in class_rate
+
+                ##### TEMPORARY FIX!!! #####
+                if np.sum(class_rate) == 0:
+                    ca_class = rng.choice(
+                        np.arange(ca_class),
+                        p=np.sum(freqs[:, :ca_class], axis=0) / np.sum(freqs),
+                    )
+                    class_rate = self.num_lineages * freqs[:, ca_class]
+                # what happens if there is only one lineage in given class?
                 class_idxs = rng.choice(
                     np.arange(self.num_fitness_classes),
                     size=2,
                     p=class_rate / np.sum(class_rate),
                 )
+                #####
+
                 a = self.remove_lineage_within_class(class_idxs[0])
                 b = self.remove_lineage_within_class(class_idxs[1])
                 c = ancestry.Lineage(len(nodes), [], ca_class)

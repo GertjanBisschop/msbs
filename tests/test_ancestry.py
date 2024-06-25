@@ -171,3 +171,17 @@ class TestSimFitnessClass:
         sim = fitnessclass.Simulator(L, r, n, Ne, seed=seed, K=k_map)
         ts = sim.run(debug=False)
         assert ts.num_trees > 1
+
+    @pytest.mark.parametrize("seed", [962, 112254, 5478, 12032, 22080, 47908])
+    def test_no_rec(self, seed):
+        L = 100
+        r = 0.0
+        n = 10
+        Ne = 10_000
+        U = 2e-3
+        s = 1e-3
+
+        sim = fitnessclass.Simulator(L, r, n, Ne, seed=seed, U=U, s=s)
+        ts = sim.run(debug=False)
+        assert ts.num_trees == 1
+        assert ts.first().num_roots == 1
