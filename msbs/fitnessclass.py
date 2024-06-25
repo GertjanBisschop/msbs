@@ -12,7 +12,13 @@ from msbs import ancestry
 from msbs import utils
 
 
-def fk(Q: np.ndarray, I: np.ndarray, k: int, num_lins_vec: np.ndarray) -> Callable:
+def fk(
+    Q: np.ndarray,
+    I: np.ndarray,
+    k: int,
+    num_lins_vec: np.ndarray,
+    pop_size: float = 1.0,
+) -> Callable:
     """
     Returns a function that gives the instantaneous coalescence
     rate at time `time` in class `k` given the rate matrix `Q`
@@ -23,8 +29,7 @@ def fk(Q: np.ndarray, I: np.ndarray, k: int, num_lins_vec: np.ndarray) -> Callab
     def _fk(time: float) -> float:
         freqs = I @ expm(Q * time)
         freqs_k = np.sum(num_lins_vec * freqs[:, k])
-
-        return max(0, freqs_k * (freqs_k - 1) / 2)
+        return max(0, freqs_k * (freqs_k - 1) / 2) * 1 / pop_size
 
     return _fk
 
@@ -88,7 +93,6 @@ class Simulator(ancestry.SuperSimulator):
         """
         Q = np.zeros((self.num_fitness_classes, self.num_fitness_classes))
         Q += np.eye(self.num_fitness_classes, k=-1)
-        # Q_ij = i * s
         Q *= self.s * (np.arange(1, self.num_fitness_classes + 1) + self.min_fitness)
         Q[np.diag_indices(Q.shape[0])] = -np.sum(Q, axis=1)
 
@@ -139,6 +143,7 @@ class Simulator(ancestry.SuperSimulator):
         for k in range(hk_probs.size):
             hk_probs[k] = utils.poisson_pmf(k, load_g)
         hk_probs /= np.sum(hk_probs)
+        pop_size = hk_probs * self.Ne * self.ploidy
         last_event = "in"
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
@@ -150,21 +155,27 @@ class Simulator(ancestry.SuperSimulator):
         while not self.stop_condition():
             if debug:
                 self.print_state(last_event)
+            # re rate
             lineage_links = [
                 lineage.num_recombination_links for lineage in self.lineages
             ]
             total_links = sum(lineage_links)
             re_rate = total_links * self.r
             t_re = math.inf if re_rate == 0 else self.rng.expovariate(re_rate)
+            # ca rate
             t_ca = math.inf
             coal_rate_fs = [
-                fk(self.Q, I, i, self.num_lineages) for i in range(self.Q.shape[0])
+                fk(self.Q, I, i, self.num_lineages, pop_size[i])
+                for i in range(self.Q.shape[0])
             ]
             ca_class = None
             for idx in range(self.num_fitness_classes):
                 # draw waiting time for fitness class `idx`
-                temp = utils.sample_nhpp(coal_rate_fs[idx], self.rng)
-                temp *= self.ploidy * self.Ne * hk_probs[idx]
+                temp = utils.sample_nhpp(
+                    coal_rate_fs[idx],
+                    self.rng,
+                    jump=0.1 * pop_size[idx],
+                )
                 if temp < t_ca:
                     t_ca = temp
                     ca_class = idx

@@ -73,7 +73,7 @@ def sample_nhpp(rate_f: Callable, rng: random.Random, start_time=0, jump=0.1) ->
     upper_t_interval = jump + start_time
     sup_rate = rate_f(upper_t_interval)
     if sup_rate == 0:
-        sup_rate, upper_t_interval = zero_sup_rate(rate_f, rng, upper_t_interval)
+        sup_rate, upper_t_interval = zero_sup_rate(rate_f, rng, upper_t_interval, jump)
         if sup_rate == 0:
             return math.inf
     new_time = start_time
@@ -94,7 +94,7 @@ def sample_nhpp(rate_f: Callable, rng: random.Random, start_time=0, jump=0.1) ->
             sup_rate = rate_f(upper_t_interval)
             if sup_rate == 0:
                 sup_rate, upper_t_interval = zero_sup_rate(
-                    rate_f, rng, upper_t_interval
+                    rate_f, rng, upper_t_interval, jump
                 )
                 if sup_rate == 0:
                     return math.inf
