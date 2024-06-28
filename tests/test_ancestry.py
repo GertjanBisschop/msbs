@@ -4,6 +4,7 @@ import msbs.ancestry as ancestry
 import msbs.bins as bins
 import msbs.zeng as zeng
 import msbs.fitnessclass as fitnessclass
+import msbs.zeroclass as zeroclass
 
 
 class TestSimAncestry:
@@ -185,3 +186,17 @@ class TestSimFitnessClass:
         ts = sim.run(debug=False)
         assert ts.num_trees == 1
         assert ts.first().num_roots == 1
+
+
+class TestZeroClass:
+    def test_simple(self):
+        L = 1000
+        r = 1e-3
+        n = 4
+        Ne = 10_000
+        U= 2e-3
+        s= 1e-3
+        sim = zeroclass.Simulator(L, r, n, Ne, U=U, s=s)
+        ts = sim._intial_setup()
+
+        assert ts.num_edges > 1

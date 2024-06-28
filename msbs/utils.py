@@ -101,3 +101,14 @@ def sample_nhpp(rate_f: Callable, rng: random.Random, start_time=0, jump=0.1) ->
             w = adjust_w * old_sup_rate / sup_rate
 
     return new_time
+
+def markov_chain_expected_absorption(b_inv):
+    result = np.zeros(b_inv.shape[0])
+    e = np.ones_like(result)
+    z = np.zeros_like(result)
+    for i in range(b_inv.shape[0]):
+        z[i] = 1
+        result[i] = z @ -b_inv @ e
+        z[i] = 0
+    
+    return result
