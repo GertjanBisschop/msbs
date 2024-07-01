@@ -24,9 +24,7 @@ def _run_slim(scriptfile, slim_params, outdir, rep):
     ]
     subprocess.check_output(cmd)
     with warnings.catch_warnings():
-        warnings.simplefilter(
-            "ignore"
-        )
+        warnings.simplefilter("ignore")
         ts = pyslim.update(tskit.load(treefile))
         rts = sample_recap_simplify(
             ts, slim_params["n"], slim_params["NE"], slim_params["RHO"]
@@ -44,9 +42,10 @@ def sample_recap_simplify(slim_ts, sample_size, Ne, r):
     demography[0].initial_size = Ne
     with warnings.catch_warnings():
         warnings.simplefilter(
-            "ignore", category=[
+            "ignore",
+            category=[
                 msprime.IncompletePopulationMetadataWarning,
-            ]
+            ],
         )
         recap = msprime.sim_ancestry(
             initial_state=slim_ts,
@@ -143,7 +142,7 @@ class SimRunner:
                 with poolcontext(processes=num_processes) as pool:
                     for simulate_window in pool.starmap(
                         _run_slim,
-                        #scriptfile, slim_params, outdir, rep
+                        # scriptfile, slim_params, outdir, rep
                         zip(
                             itertools.repeat(scriptfile),
                             itertools.repeat(slim_params),

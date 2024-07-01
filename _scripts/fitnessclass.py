@@ -7,6 +7,7 @@ import numpy as np
 import os
 import pathlib
 import pyslim
+import random
 import subprocess
 import warnings
 import tskit
@@ -31,21 +32,26 @@ class Stat:
         return
 
     @abc.abstractmethod
-    def plot(data: np.ndarray, outfile: pathlib.Path, models:List[str]) -> None:
+    def plot(data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
         return
-    
+
+
 @dataclasses.dataclass
 class SummaryStat(Stat):
-    
     @abc.abstractmethod
     def compute(self, ts: tskit.TreeSequence) -> float:
         return
 
-    def plot(self, data: np.ndarray, outfile: pathlib.Path, models:List[str]) -> None:
+    def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
         plt.violinplot(data.tolist(), showmeans=True)
         plt.xticks(
             [y + 1 for y in range(data.shape[0])],
-            labels=models + ["neutral", "neutral rescaled", "slim",],
+            labels=models
+            + [
+                "neutral",
+                "neutral rescaled",
+                "slim",
+            ],
         )
         plt.savefig(outfile, dpi=120)
         plt.close("all")
@@ -53,33 +59,71 @@ class SummaryStat(Stat):
 
 @dataclasses.dataclass
 class CovStat(Stat):
-    r: float
+    dim: int = 20
+    label: str = "CovDecay"
+    r: float = 0.0
 
-    @abc.abstractmethod
     def compute(self, ts: tskit.TreeSequence) -> float:
-        return
-    
-    def expected_cov(self):
-        return (self.r + 18) / (self.r**2 + 13 * self.r + 18)
+        # requires many observations of t_i and t_j at given distances
+        # t_i can stay same fixed value
+        num_points = self.dim
+        result = np.zeros(num_points, dtype=np.float64)
+        points = np.arange(num_points + 1) / (num_points + 1) * ts.sequence_length
+        u, v = random.sample(range(ts.num_samples), 2)
 
-    
-    def plot(self, data: np.ndarray, outfile: pathlib.Path, models:List[str]) -> None:
-        labels = models + ["neutral", "neutral rescaled", "slim",]
-        a = self.compute_cov(a)
+        # collect info on pairwaise coalescence times
+        tree = ts.at(points[0])
+        coal_time_uv = tree.tmrca(u, v)
+        for i in range(num_points):
+            tree = ts.at(points[i + 1])
+            result[i] = tree.tmrca(u, v) == coal_time_uv
+
+        return result
+
+    def group(self, all_reps, num_models):
+        # shape a: num_models, num_reps, num_points
+        num_reps = all_reps.shape[1]
+        num_points = self.dim
+        result = np.zeros((num_models, num_points), dtype=np.float64)
+        for i in range(num_models):
+            for j in range(num_points):
+                result[i, j] = np.sum(all_reps[i, :, j]) / num_reps
+
+        return result
+
+    def expected_cov(self, r):
+        return (r + 18) / (r**2 + 13 * r + 18)
+
+    def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
+        sequence_length = 100_000
+        labels = models + [
+            "neutral",
+            "neutral rescaled",
+            "slim",
+        ]
+        # group observations: shape: (num_models, num_reps, num_points)
+        a = self.group(data, len(labels))
         b = (
-            np.arange(self.size)
-            / self.size
-            * self.runner.sequence_length
-            * self.runner.rho
+            np.arange(self.dim + 1)
+            / (self.dim + 1)
+            * sequence_length
+            * self.r
+            * 4
+            * 10_000
         )
         marker = itertools.cycle((".", "+", "v", "^"))
-        for i, model in enumerate(models):
+        for i, model in enumerate(labels):
             x = a[i]
             plt.plot(
-                b, x, label=model, marker=next(marker), markersize=10, linestyle="None"
+                b[1:],
+                x,
+                label=model,
+                marker=next(marker),
+                markersize=10,
+                linestyle="None",
             )
         exp = np.array([self.expected_cov(r) for r in b])
-        plt.plot(b, exp, marker="o", label=f"exp_hudson")
+        plt.plot(b, exp, marker=None, label=f"exp_hudson")
         plt.legend(loc="upper right")
         plt.savefig(outfile)
         plt.close("all")
@@ -131,7 +175,7 @@ class TajimasDStat(SummaryStat):
 @dataclasses.dataclass
 class NumNodesStat(SummaryStat):
     dim: int = 1
-    label: str = "TajimasD_"
+    label: str = "NumNodes_"
 
     def compute(self, ts: tskit.TreeSequence) -> float:
         return ts.num_nodes
@@ -196,7 +240,7 @@ class SimRunner:
                     samples=params["n"],
                     sequence_length=params["L"],
                     recombination_rate=params["r"],
-                    population_size=params["Ne"]*np.exp(- params["U"] / params["s"]),
+                    population_size=params["Ne"] * np.exp(-params["U"] / params["s"]),
                     random_seed=seed,
                 )
 
@@ -253,12 +297,16 @@ class SimRunner:
         ts_paths = os.listdir(self.slim_trees)
         for i in range(self.num_reps):
             ts = tskit.load(self.slim_trees / ts_paths[i])
-            samples = self.rng.choice(np.arange(ts.num_samples), replace=False , size=n)
+            samples = self.rng.choice(np.arange(ts.num_samples), replace=False, size=n)
             ts_simpl = ts.simplify(samples)
             yield ts_simpl
 
-    def run_analysis(self, params, stats: List[Stat], output_dir: pathlib.Path, models: List[str]) -> None:
-        results = [np.zeros((len(models) + 3, self.num_reps, stat.dim)) for stat in stats]
+    def run_analysis(
+        self, params, stats: List[Stat], output_dir: pathlib.Path, models: List[str]
+    ) -> None:
+        results = [
+            np.zeros((len(models) + 3, self.num_reps, stat.dim)) for stat in stats
+        ]
 
         # run bs simulator
         m = -1
@@ -270,22 +318,26 @@ class SimRunner:
         # run neutral sims
         for i, ts in enumerate(self._run_simulator(params, model="hudson")):
             for j, stat in enumerate(stats):
-                results[j][m+1, i, ...] = stat.compute(ts)
+                results[j][m + 1, i, ...] = stat.compute(ts)
 
         # run neutral sims
         for i, ts in enumerate(self._run_simulator(params, model="hudson_rescaled")):
             for j, stat in enumerate(stats):
-                results[j][m+2, i, ...] = stat.compute(ts)
+                results[j][m + 2, i, ...] = stat.compute(ts)
 
         # TODO: run bs sims (forwards in time)
-        for i, ts in tqdm(enumerate(self._process_slim_trees(2 * params["n"])), total=self.num_reps):
-           for j, stat in enumerate(stats):
-               results[j][m+3, i, ...] = stat.compute(ts)
+        for i, ts in tqdm(
+            enumerate(self._process_slim_trees(2 * params["n"])),
+            total=self.num_reps,
+            desc="SLiM trees",
+        ):
+            for j, stat in enumerate(stats):
+                results[j][m + 3, i, ...] = stat.compute(ts)
 
         for j, stat in enumerate(stats):
             output_file = output_dir / (
                 stat.label
-                #+ f'r{params["r"]}_U{params["U"]}_s{params["s"]}_L{params["L"]}.png'
+                # + f'r{params["r"]}_U{params["U"]}_s{params["s"]}_L{params["L"]}.png'
             )
             stat.plot(results[j].squeeze(), output_file, models)
 
@@ -360,7 +412,7 @@ def main():
     # ploidy = 2
     # slim_params = get_slim_param_dict(params)
     slim_trees = pathlib.Path("_output/trees/slim/recap")
-    num_reps = 100
+    num_reps = 1000
     SR = SimRunner(num_reps=num_reps, slim_trees=slim_trees)
     output_dir = pathlib.Path("_output/fitnessclass_analysis")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -369,9 +421,11 @@ def main():
         DiversityStat(),
         TajimasDStat(),
         NumNodesStat(),
+        CovStat(r=params["r"]),
     ]
     models = ["fitnessclass", "zeroclass"]
     models = ["zeroclass"]
+    # models = []
     SR.run_analysis(params, stats, output_dir, models)
 
 
