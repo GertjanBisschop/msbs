@@ -15,6 +15,7 @@ matplotlib.use("Agg")
 
 from msbs import ancestry
 from msbs import fitnessclass
+from msbs import zeroclass
 
 
 @dataclasses.dataclass
@@ -32,7 +33,7 @@ class TsStatRunner:
     def __post_init__(self):
         self.info_str = f"L_{self.sequence_length}_r_{self.r}"
         self.set_output_dir()
-        self.models = ["localne", "hudson", "overlap"]
+        self.models = ["localne", "hudson", "overlap", "zeroclass"]
         self.rng = np.random.default_rng(self.seed)
 
     def set_output_dir(self):
@@ -78,6 +79,16 @@ class TsStatRunner:
                 n=self.samples,
                 Ne=self.Ne,
                 K=self.params["k_map"],
+                U=self.params["U"],
+                s=self.params["s"],
+            )
+            single_run = self._run_simulator(simulator)
+        elif model == "zeroclass":
+            simulator = zeroclass.Simulator(
+                L=self.sequence_length,
+                r=self.r,
+                n=self.samples,
+                Ne=self.Ne,
                 U=self.params["U"],
                 s=self.params["s"],
             )

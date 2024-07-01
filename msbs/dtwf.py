@@ -30,7 +30,7 @@ class Individual:
             + f"parents: {self.parents}, nodes: {self.nodes}, "
             + f"common_ancestors: {self.common_ancestors})"
         )
-    
+
     def add_common_ancestor(self, head, ploid):
         """
         Adds the specified ancestor (represented by the head of a segment
@@ -55,17 +55,17 @@ class DTWFSimulator(ancestry.SuperSimulator):
 
     def ancestors_remain(self):
         return True
-    
+
     def verify(self):
         return True
-    
+
     def expected_parental_distribution(self):
         # using self.r
         return 1.0
-    
+
     def get_ind_range(self):
         return
-    
+
     def losing_mut_prob(self, k_now, k_future):
         delta_k = k_now - k_future
         if delta_k < 0:
@@ -73,13 +73,12 @@ class DTWFSimulator(ancestry.SuperSimulator):
         else:
             # compute prob of losing delta_k mutations in a single time step
             return self.s * k_now
-        
 
     def pick_parent(self, child, rng, num_switches):
         u = 1.0
         acc_prob = 0.0
         parent_id = -1
-        
+
         while u > acc_prob:
             # sample parent given nh_k distribution
             parent_k = self.rng.poisson(self.mean_load, size=2)
@@ -90,7 +89,7 @@ class DTWFSimulator(ancestry.SuperSimulator):
             # compute probability of having lost/gained k_child - child.value mutations
             acc_prob = 1.0
             u = self.rng.random()
-             
+
         return parent_id, parent_k
 
     def generation(self):
@@ -107,16 +106,15 @@ class DTWFSimulator(ancestry.SuperSimulator):
         # Draw recombinations in children and sort segments by
         # inheritance direction.
 
-
     def generate_breakpoint(self):
         pass
-    
+
     def recombine(self):
         pass
-   
+
     def run(self, simplify=True, debug=False):
         return self._sim(simplify, debug)
-    
+
     def _sim(self, simplify, debug=False):
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()

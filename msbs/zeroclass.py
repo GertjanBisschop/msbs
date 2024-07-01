@@ -1,6 +1,7 @@
 import collections
 import dataclasses
 import math
+import msprime
 import numpy as np
 import tskit
 
@@ -12,7 +13,7 @@ from msbs import utils
 class Simulator(ancestry.SuperSimulator):
     U: float = 2e-3
     s: float = 1e-3
-    
+
     def __post_init__(self):
         num_sig = 2
         self.mean_load = self.U * (1 - self.s) / self.s
@@ -20,7 +21,7 @@ class Simulator(ancestry.SuperSimulator):
         self.num_lineages = np.zeros(self.num_fitness_classes, dtype=np.int64)
         self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
         self.Q = self.generate_q()
-        self.rng = np.random.default_rng(12)
+        self.rng = np.random.default_rng(self.seed)
         self.lineages = []
         self.B_inv = np.linalg.inv(np.flip(self.Q)[:-1, :-1])
 
@@ -30,11 +31,11 @@ class Simulator(ancestry.SuperSimulator):
     def finalise(self, tables, nodes, simplify):
         for node in nodes:
             tables.nodes.add_row(
-                flags=node.flags, time=node.time, metadata=node.metadata
+                flags=node.flags, time=node.time, metadata=node.metadata, population=0
             )
         tables.sort()
         tables.edges.squash()
-        print(tables)
+        tables.sort()
         ts = tables.tree_sequence()
         if simplify:
             ts = ts.simplify()
@@ -49,6 +50,12 @@ class Simulator(ancestry.SuperSimulator):
         k -= self.min_fitness
         return int(max(0, min(self.num_fitness_classes - 1, k)))
 
+    def set_post_rec_fitness_class(self, value, p):
+        start_value = value + self.min_fitness
+        value = self.rng.binomial(start_value, p)
+        value += self.rng.poisson(self.mean_load * (1 - p))
+        return self.adjust_fitness_class(value)
+
     def generate_q(self, num_sig=2):
         """
         Generates rate matrix to transition from class i to j.
@@ -62,9 +69,19 @@ class Simulator(ancestry.SuperSimulator):
 
         return Q
 
+    def run(self, simplify=True):
+        initial_state = self._intial_setup(simplify=False)
+        ts = self._complete(initial_state)
+        if simplify:
+            ts = ts.simplify()
+        return ts
+
     def _intial_setup(self, simplify=True, debug=False):
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables.populations.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables.populations.add_row()
+        tables.time_units = "generations"
         nodes = []
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
@@ -72,7 +89,7 @@ class Simulator(ancestry.SuperSimulator):
             self.lineages.append(ancestry.Lineage(len(nodes), segment_chain, k))
             nodes.append(ancestry.Node(time=0, flags=tskit.NODE_IS_SAMPLE))
         mu_free_times = utils.markov_chain_expected_absorption(self.B_inv)
-        
+
         d = collections.deque()
         for lineage in self.lineages:
             t = 0
@@ -84,7 +101,7 @@ class Simulator(ancestry.SuperSimulator):
                 k = lineage.value
                 if k > 0:
                     assert k < self.num_fitness_classes
-                    t_mu = mu_free_times[k]
+                    t_mu = mu_free_times[k - 1]
                     t_re = (
                         math.inf if re_rate == 0 else self.rng.exponential(1 / re_rate)
                     )
@@ -100,6 +117,13 @@ class Simulator(ancestry.SuperSimulator):
                         # set values of left and right lineages
                         left_lineage.value = 0
                         right_lineage.value = 0
+                        p = breakpoint / self.L
+                        left_lineage.value = self.set_post_rec_fitness_class(
+                            left_lineage.value, p
+                        )
+                        right_lineage.value = self.set_post_rec_fitness_class(
+                            right_lineage.value, 1 - p
+                        )
                         d.append((t, left_lineage))
                         d.append((t, right_lineage))
                     else:  # loose all mutations
@@ -119,3 +143,12 @@ class Simulator(ancestry.SuperSimulator):
                     nodes.append(ancestry.Node(time=t))
 
         return self.finalise(tables, nodes, simplify)
+
+    def _complete(self, ts):
+        rescale = np.exp(-self.U / self.s)
+        return msprime.sim_ancestry(
+            initial_state=ts,
+            recombination_rate=self.r,
+            population_size=self.Ne * rescale,
+            ploidy=self.ploidy,
+        )
