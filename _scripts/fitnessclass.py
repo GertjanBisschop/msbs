@@ -38,11 +38,15 @@ class Stat:
 
 @dataclasses.dataclass
 class SummaryStat(Stat):
+    norm: bool = False
+
     @abc.abstractmethod
     def compute(self, ts: tskit.TreeSequence) -> float:
         return
 
     def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
+        if self.norm:
+            data /= np.mean(data[-3])
         plt.violinplot(data.tolist(), showmeans=True)
         plt.xticks(
             [y + 1 for y in range(data.shape[0])],
@@ -133,6 +137,7 @@ class CovStat(Stat):
 class ExtBranchStat(SummaryStat):
     dim: int = 1
     label: str = "ext_branch_"
+    norm: bool = True
 
     def compute(self, ts: tskit.TreeSequence) -> float:
         sfs = ts.allele_frequency_spectrum(
@@ -149,6 +154,7 @@ class ExtBranchStat(SummaryStat):
 class DiversityStat(SummaryStat):
     dim: int = 1
     label: str = "diversity_"
+    norm: bool = True
 
     def compute(self, ts: tskit.TreeSequence) -> float:
         return ts.diversity(
@@ -176,9 +182,61 @@ class TajimasDStat(SummaryStat):
 class NumNodesStat(SummaryStat):
     dim: int = 1
     label: str = "NumNodes_"
+    norm: bool = True
 
     def compute(self, ts: tskit.TreeSequence) -> float:
         return ts.num_nodes
+
+
+@dataclasses.dataclass
+class NumTreesStat(SummaryStat):
+    dim: int = 1
+    label: str = "NumTrees_"
+    norm: bool = True
+
+    def compute(self, ts: tskit.TreeSequence) -> float:
+        return ts.num_trees
+
+
+@dataclasses.dataclass
+class MidTreeTBL(SummaryStat):
+    dim: int = 1
+    label: str = "MidTreeTBL_"
+    norm: bool = True
+    mid: int = 0
+
+    def compute(self, ts: tskit.TreeSequence) -> float:
+        return ts.at(self.mid).total_branch_length
+
+
+@dataclasses.dataclass
+class FirstTreeTBL(SummaryStat):
+    dim: int = 1
+    label: str = "FirstTreeTBL_"
+    norm: bool = True
+
+    def compute(self, ts: tskit.TreeSequence) -> float:
+        return ts.first().total_branch_length
+
+
+@dataclasses.dataclass
+class MidTreeB2(SummaryStat):
+    dim: int = 1
+    label: str = "MidTreeB2_"
+    mid: int = 0
+
+    def compute(self, ts: tskit.TreeSequence) -> float:
+        return ts.at(self.mid).b2_index(base=2)
+
+
+@dataclasses.dataclass
+class MidTreeColless(SummaryStat):
+    dim: int = 1
+    label: str = "MidTreeColless_"
+    mid: int = 0
+
+    def compute(self, ts: tskit.TreeSequence) -> float:
+        return ts.at(self.mid).colless_index()
 
 
 class SimRunner:
@@ -397,16 +455,16 @@ def main():
         "r": 1e-8,
         "n": 100,
         "Ne": 10_000,
-        "U": 2e-3,
+        "U": 2e-3,  # /2?
         "s": 1e-3,
     }
     ## PARAMS
     params = {
         "L": 100_000,
         "r": 1e-8,
-        "n": 4,
+        "n": 5,
         "Ne": 10_000,
-        "U": 2e-3,
+        "U": 1e-3,
         "s": 1e-3,
     }
     # ploidy = 2
@@ -421,6 +479,11 @@ def main():
         DiversityStat(),
         TajimasDStat(),
         NumNodesStat(),
+        NumTreesStat(),
+        FirstTreeTBL(),
+        MidTreeTBL(mid=params["L"] // 2),
+        MidTreeB2(mid=params["L"] // 2),
+        MidTreeColless(mid=params["L"] // 2),
         CovStat(r=params["r"]),
     ]
     models = ["fitnessclass", "zeroclass"]
