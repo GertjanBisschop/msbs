@@ -22,6 +22,7 @@ class Individual:
         self.nodes = nodes
         self.parents = parents
         self.time = time
+        # self.lineages = [ancestry.Lineage(None, None) for i in range(ploidy)]
         self.common_ancestors = [[] for i in range(ploidy)]
 
     def __str__(self):
@@ -50,8 +51,10 @@ class DTWFSimulator(ancestry.SuperSimulator):
         num_sig = 2  # number of standard deviation for distribution
         self.mean_load = self.U * (1 - self.s) / self.s
         self.num_fitness_classes = 2 * math.ceil(num_sig * math.sqrt(self.mean_load))
+        self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
         self.lineages = []
-        self.p0_p = self.expected_parental_distribution()
+        self.p = self.expected_parental_distribution()
+        self.parents_range = self.get_parents_range()
 
     def ancestors_remain(self):
         return True
@@ -60,51 +63,92 @@ class DTWFSimulator(ancestry.SuperSimulator):
         return True
 
     def expected_parental_distribution(self):
-        # using self.r
-        return 1.0
+        exp_bps = int(1 / (self.L * self.r))
+        num_segs = exp_bps + 1
+        p = (math.floor(num_segs / 2) + 1) / num_segs
+        return p
+
+    def adjust_fitness_class(self, k):
+        k -= self.min_fitness
+        return int(max(0, min(self.num_fitness_classes - 1, k)))
 
     def get_ind_range(self):
         return
 
-    def losing_mut_prob(self, k_now, k_future):
-        delta_k = k_now - k_future
-        if delta_k < 0:
-            return 0.0
-        else:
-            # compute prob of losing delta_k mutations in a single time step
-            return self.s * k_now
+    def insert_lineage(self, lineage):
+        self.lineages.append(lineage)
+        self.num_lineages += 1
 
-    def pick_parent(self, child, rng, num_switches):
-        u = 1.0
-        acc_prob = 0.0
-        parent_id = -1
+    def remove_lineage(self, lineage_id):
+        lin = self.lineages.pop(lineage_id)
+        self.num_lineages -= 1
+        return lin
 
-        while u > acc_prob:
-            # sample parent given nh_k distribution
-            parent_k = self.rng.poisson(self.mean_load, size=2)
-            # compute probability of child having this parent
-            # given expected number of switches
-            # contribution by each parent
-            k_child = self.p0_p * parent_k[0] + (1 - self.p0_p) * parent_k[1]
-            # compute probability of having lost/gained k_child - child.value mutations
-            acc_prob = 1.0
-            u = self.rng.random()
+    def gen_parents_k(self, pheno):
+        found = False
+        while not found:
+            i, j = self.rng.poisson(self.mean_load, size=2)
+            value = self.p * i + (1 - self.p) * j
+            found = abs(pheno - value) < 0.5
+        return i, j
 
-        return parent_id, parent_k
+    def get_parents_range(self):
+        ret = np.arange(self.min_fitness, self.min_fitness + self.num_fitness_classes)
+        for i in range(ret.size):
+            ret[i] = utils.poisson_pmf(ret[i], self.mean_load)
+        ret /= np.sum(ret)
+        return np.ceil(np.cumsum(ret) * self.Ne)
 
-    def generation(self):
+    def generation(self, nodes, tables):
         offspring = collections.defaultdict(list)
         for anc in self.lineages:
-            # choose a parent
+            # loose mutation with prob self.s * anc.value
+            u = self.rng.uniform()
+            if anc.value > 0:
+                if u < self.s * (anc.value + self.min_fitness):
+                    anc.value = 1
+
+            parents_k = self.gen_parents_k(anc.value)
+            for ploid in range(self.ploidy):
+                pk = self.adjust_fitness_class
+                start = 0
+                if pk > 0:
+                    start = self.parents_range[pk - 1]
+                stop = self.parents_range[pk]
+            # choose a parent from klass parents_k[ploid]
 
             # parent consists of two lineages with fitness k and k'
-            parent = None
+            # parent idxs range from [[0, ne * nh0], ..., [Ne - Ne * nhk, Ne]]
+            parent = -1
             if parent not in offspring:
                 offspring[parent] = []
             offspring[parent].append(anc)
 
-        # Draw recombinations in children and sort segments by
-        # inheritance direction.
+        for children in offspring:
+            H = [[], []]
+            for child in children:
+                # recombine across both parents
+                # add recombined lineages if not None
+                segs_pair = []  # generate by recombination
+                for seg in segs_pair:
+                    self.insert_lineage(seg)
+
+                # collect segments inherited by the same individual
+                for seg in segs_pair:
+                    continue
+
+            for ploid, h in enumerate(H):
+                segments_to_merge = len(h)
+                if segments_to_merge == 1:
+                    h = []
+                else:
+                    c = ancestry.Lineage(len(nodes), [])
+                    for interval, intersecting_lineages in ancestry.merge_ancestry(h):
+                        c.ancestry.append(interval)
+                        for lineage in intersecting_lineages:
+                            tables.edges.add_row(
+                                interval.left, interval.right, c.node, parent.node
+                            )
 
     def generate_breakpoint(self):
         pass
@@ -124,7 +168,7 @@ class DTWFSimulator(ancestry.SuperSimulator):
         t = 0
         while self.ancestors_remain():
             t += 1
-            self.generation()
+            self.generation(nodes, tables)
 
         assert self.verify()
 

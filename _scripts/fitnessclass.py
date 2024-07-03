@@ -57,6 +57,7 @@ class SummaryStat(Stat):
                 "slim",
             ],
         )
+        plt.title(self.label)
         plt.savefig(outfile, dpi=120)
         plt.close("all")
 
@@ -129,7 +130,60 @@ class CovStat(Stat):
         exp = np.array([self.expected_cov(r) for r in b])
         plt.plot(b, exp, marker=None, label=f"exp_hudson")
         plt.legend(loc="upper right")
+        plt.title(self.label)
+        plt.xlabel("rho")
+        plt.ylabel("covariance")
         plt.savefig(outfile)
+        plt.close("all")
+
+
+@dataclasses.dataclass
+class SFSStat(Stat):
+    dim: int
+    label: str = "SFS"
+
+    def compute(self, ts: tskit.TreeSequence) -> np.ndarray:
+        return ts.allele_frequency_spectrum(
+            polarised=True, mode="branch", span_normalise=True
+        )[1:-1]
+
+    def group(self, all_reps):
+        return np.mean(all_reps, axis=1)
+
+    def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
+        labels = models + [
+            "neutral",
+            "neutral rescaled",
+            "slim",
+        ]
+        # group observations: shape: (num_models, num_reps, num_points)
+        a = self.group(data)
+        x_axis = np.arange(a.shape[-1])
+        p = len(x_axis)
+        p1 = p * 2.5
+        p2 = p * 1.5
+        num_bars = len(labels)
+        width = 1 / (num_bars)
+        half_width = 1 / 2 * width
+        half_num_bars = np.floor(num_bars / 2)
+
+        fig = plt.figure(figsize=(p1, p2))
+        ax = fig.gca()
+
+        for i in range(num_bars):
+            j = i - half_num_bars
+            counts = a[i]
+            ax.bar(
+                x_axis + j * half_width,
+                counts,
+                label=labels[i],
+                width=half_width,
+                align="center",
+            )
+        ax.xaxis.set_tick_params(which="major", labelsize=p2)
+        ax.legend(loc="upper right")
+        plt.title(self.label)
+        fig.savefig(outfile)
         plt.close("all")
 
 
@@ -483,10 +537,10 @@ def main():
         FirstTreeTBL(),
         MidTreeTBL(mid=params["L"] // 2),
         MidTreeB2(mid=params["L"] // 2),
-        MidTreeColless(mid=params["L"] // 2),
         CovStat(r=params["r"]),
+        SFSStat(dim=params["n"] * 2 - 1),
     ]
-    models = ["fitnessclass", "zeroclass"]
+    # models = ["fitnessclass", "zeroclass"]
     models = ["zeroclass"]
     # models = []
     SR.run_analysis(params, stats, output_dir, models)

@@ -203,3 +203,18 @@ class TestZeroClass:
         tsfull = sim._complete(ts)
         for tree in tsfull.trees():
             assert tree.num_roots == 1
+
+    @pytest.mark.parametrize("seed", [962, 112254, 5478, 12032, 22080, 47908])
+    def test_stepwise(self, seed):
+        L = 1000
+        r = 1e-5
+        n = 4
+        Ne = 10_000
+        U = 2e-3
+        s = 1e-3
+        sim = zeroclass.Simulator(L, r, n, Ne, seed=seed, U=U, s=s)
+        ts = sim._intial_setup_stepwise(simplify=False)
+        assert ts.num_edges > 1
+        tsfull = sim._complete(ts)
+        for tree in tsfull.trees():
+            assert tree.num_roots == 1
