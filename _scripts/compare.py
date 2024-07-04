@@ -14,7 +14,7 @@ import warnings
 import tskit
 
 from tqdm import tqdm
-from typing import List
+from typing import List, Dict
 
 from msbs import ancestry
 from msbs import fitnessclass
@@ -66,7 +66,7 @@ class SummaryStat(Stat):
 @dataclasses.dataclass
 class CovStat(Stat):
     dim: int = 20
-    label: str = "CovDecay"
+    label: str = "CovDecay_"
     r: float = 0.0
 
     def compute(self, ts: tskit.TreeSequence) -> float:
@@ -141,17 +141,16 @@ class CovStat(Stat):
 @dataclasses.dataclass
 class SFSStat(Stat):
     dim: int
-    label: str = "SFS"
+    label: str = "SFS_"
 
     def compute(self, ts: tskit.TreeSequence) -> np.ndarray:
-        return ts.allele_frequency_spectrum(
+        afs = ts.allele_frequency_spectrum(
             polarised=True, mode="branch", span_normalise=True
         )[1:-1]
+        return afs / np.sum(afs)
 
     def group(self, all_reps):
         mean_over_reps = np.mean(all_reps, axis=1)
-        # to normalise: 
-        # mean_over_reps / np.sum(mean_over_reps, axis=-1)[:, np.newaxis]
         return mean_over_reps
 
     def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
@@ -162,29 +161,40 @@ class SFSStat(Stat):
         ]
         # group observations: shape: (num_models, num_reps, num_points)
         a = self.group(data)
-        x_axis = np.arange(a.shape[-1])
-        p = len(x_axis)
-        p1 = p * 2.5
-        p2 = p * 1.5
-        num_bars = len(labels)
-        width = 1 / (num_bars)
-        half_width = 1 / 2 * width
-        half_num_bars = np.floor(num_bars / 2)
+        if self.dim <= 10:
+            x_axis = np.arange(1, a.shape[-1] + 1)
+            p = len(x_axis)
+            p1 = p * 2.5
+            p2 = p * 1.5
+            fig = plt.figure(figsize=(p1, p2))
+            ax = fig.gca()
+            num_bars = len(labels)
+            width = 1 / (num_bars)
+            half_width = 1 / 2 * width
+            half_num_bars = np.floor(num_bars / 2)
 
-        fig = plt.figure(figsize=(p1, p2))
-        ax = fig.gca()
+            for i in range(num_bars):
+                j = i - half_num_bars
+                counts = a[i]
+                ax.bar(
+                    x_axis + j * half_width,
+                    counts,
+                    label=labels[i],
+                    width=half_width,
+                    align="center",
+                )
+            ax.xaxis.set_tick_params(which="major", labelsize=p2)
 
-        for i in range(num_bars):
-            j = i - half_num_bars
-            counts = a[i]
-            ax.bar(
-                x_axis + j * half_width,
-                counts,
-                label=labels[i],
-                width=half_width,
-                align="center",
-            )
-        ax.xaxis.set_tick_params(which="major", labelsize=p2)
+        else:
+            # continuous plot
+            # only plot first q alleles
+            q = self.dim // 5
+            x_axis = np.arange(1, q)
+            fig = plt.figure()
+            ax = fig.gca()
+            for i in range(len(labels)):
+                ax.plot(x_axis, a[i, : q - 1], label=labels[i])
+
         ax.legend(loc="upper right")
         plt.title(self.label)
         fig.savefig(outfile)
@@ -206,12 +216,12 @@ class ExtBranchStat(SummaryStat):
             polarised=True,
         )
         return sfs[1] / np.sum(sfs)
-    
+
 
 @dataclasses.dataclass
 class OldestRootStat(SummaryStat):
     dim: int = 1
-    label: str = "oldest_root"
+    label: str = "oldest_root_"
     norm: bool = True
 
     def compute(self, ts: tskit.TreeSequence) -> float:
@@ -319,7 +329,7 @@ class SimRunner:
         max_seed = 2**16
         return self.rng.integers(1, max_seed, size=self.num_reps)
 
-    def _run_simulator(self, params, model="fitnessclass"):
+    def _run_simulator(self, params, n, model="fitnessclass"):
         seeds = self.get_seeds()
 
         if model == "fitnessclass":
@@ -335,7 +345,7 @@ class SimRunner:
             sim = fitnessclass.Simulator(
                 L=params["L"],
                 r=params["r"],
-                n=params["n"],
+                n=n,
                 Ne=params["Ne"],
                 ploidy=2,
                 K=k_map,
@@ -350,7 +360,7 @@ class SimRunner:
             sim = zeroclass.Simulator(
                 L=params["L"],
                 r=params["r"],
-                n=params["n"],
+                n=n,
                 Ne=params["Ne"],
                 ploidy=2,
                 U=params["U"],
@@ -363,7 +373,7 @@ class SimRunner:
         elif model == "hudson_rescaled":
             for seed in tqdm(seeds, desc="Running hudson."):
                 yield msprime.sim_ancestry(
-                    samples=params["n"],
+                    samples=n,
                     sequence_length=params["L"],
                     recombination_rate=params["r"],
                     population_size=params["Ne"] * np.exp(-params["U"] / params["s"]),
@@ -373,7 +383,7 @@ class SimRunner:
         else:
             for seed in tqdm(seeds, desc="Running hudson."):
                 yield msprime.sim_ancestry(
-                    samples=params["n"],
+                    samples=n,
                     sequence_length=params["L"],
                     recombination_rate=params["r"],
                     population_size=params["Ne"],
@@ -405,7 +415,7 @@ class SimRunner:
         sts = recap.simplify(keep_nodes)
         return sts
 
-    def _run_slim(self, slim_params):
+    def _run_slim(self, slim_params, n):
         treefile = self.slim_trees / "temp.trees"
         slim_params["OUTFILE"] = str(treefile)
         scriptfile = self.slim_trees / "bs.slim"
@@ -428,7 +438,12 @@ class SimRunner:
             yield ts_simpl
 
     def run_analysis(
-        self, params, stats: List[Stat], output_dir: pathlib.Path, models: List[str]
+        self,
+        params: Dict,
+        n: int,
+        stats: List[Stat],
+        output_dir: pathlib.Path,
+        models: List[str],
     ) -> None:
         results = [
             np.zeros((len(models) + 3, self.num_reps, stat.dim)) for stat in stats
@@ -437,23 +452,23 @@ class SimRunner:
         # run bs simulator
         m = -1
         for m, model in enumerate(models):
-            for i, ts in enumerate(self._run_simulator(params, model=model)):
+            for i, ts in enumerate(self._run_simulator(params, n, model=model)):
                 for j, stat in enumerate(stats):
                     results[j][m, i, ...] = stat.compute(ts)
 
         # run neutral sims
-        for i, ts in enumerate(self._run_simulator(params, model="hudson")):
+        for i, ts in enumerate(self._run_simulator(params, n, model="hudson")):
             for j, stat in enumerate(stats):
                 results[j][m + 1, i, ...] = stat.compute(ts)
 
         # run neutral sims
-        for i, ts in enumerate(self._run_simulator(params, model="hudson_rescaled")):
+        for i, ts in enumerate(self._run_simulator(params, n, model="hudson_rescaled")):
             for j, stat in enumerate(stats):
                 results[j][m + 2, i, ...] = stat.compute(ts)
 
         # TODO: run bs sims (forwards in time)
         for i, ts in tqdm(
-            enumerate(self._process_slim_trees(2 * params["n"])),
+            enumerate(self._process_slim_trees(2 * n)),
             total=self.num_reps,
             desc="SLiM trees",
         ):
@@ -461,10 +476,7 @@ class SimRunner:
                 results[j][m + 3, i, ...] = stat.compute(ts)
 
         for j, stat in enumerate(stats):
-            output_file = output_dir / (
-                stat.label
-                # + f'r{params["r"]}_U{params["U"]}_s{params["s"]}_L{params["L"]}.png'
-            )
+            output_file = output_dir / (stat.label + f"n{n}.png")
             stat.plot(results[j].squeeze(), output_file, models)
 
 
@@ -515,62 +527,58 @@ def get_slim_param_dict(params):
         "NE": params["Ne"],
     }
 
+
 @click.command()
-@click.option("--scenario", default='simple')
+@click.option("--scenario", default="simple")
 @click.option("--slim", default=None)
 @click.option("--n", default=5)
 def compare(scenario, slim, n):
-    possible_scenarios = {'human', 'dros', 'human_weak', 'human_strong', 'simple'}
+    possible_scenarios = {"human", "dros", "human_weak", "human_strong", "simple"}
     if not scenario in possible_scenarios:
-        click.echo('Scenario not implemented.')
+        click.echo("Scenario not implemented.")
         raise SystemExit(1)
     if slim is None:
         slim_trees = pathlib.Path("_output/trees/slim/recap")
-        assert scenario == 'simple'
+        assert scenario == "simple"
     else:
         slim_trees = pathlib.Path(slim)
     if not slim_trees.exists():
-        click.echo('Slim directory does not exist.')
+        click.echo("Slim directory does not exist.")
         raise SystemExit(1)
-    
+
     ## PARAMS
-    params_scenarios = {  
-        'simple' : {
+    params_scenarios = {
+        "simple": {  # U/s = 1, Ns*e**(-U/s) = 3.67
             "L": 100_000,
             "r": 1e-8,
-            "n": n,
             "Ne": 10_000,
             "U": 1e-3,
             "s": 1e-3,
         },
-        'human': { # U/s = 18
+        "human": {  # U/s = 18, Ns*e**(-U/s) = 3.8e-7
             "L": 130_000_000,
             "r": 1e-8,
-            "n": n,
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-3,
         },
-        'human_weak': { # U/s = 180
+        "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70
             "L": 130_000_000,
             "r": 1e-8,
-            "n": n,
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-4,
         },
-        'human_strong': { # U/s = 1.8
+        "human_strong": {  # U/s = 1.8, Ns*e**(-U/s) = 41
             "L": 130_000_000,
             "r": 1e-8,
-            "n": n,
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-2,
         },
-        'dros': { # U/s = 50
+        "dros": {  # U/s = 50, Ns*e**(-U/s) = 3.8e-19
             "L": 24_000_000,
             "r": 1e-8,
-            "n": n,
             "Ne": 1_000_000,
             "U": 0.1,
             "s": 2e-3,
@@ -593,12 +601,12 @@ def compare(scenario, slim, n):
         MidTreeB2(mid=params["L"] // 2),
         OldestRootStat(),
         CovStat(r=params["r"]),
-        SFSStat(dim=params["n"] * 2 - 1),
+        SFSStat(dim=n * 2 - 1),
     ]
     # models = ["fitnessclass", "zeroclass"]
     models = ["zeroclass"]
     # models = []
-    SR.run_analysis(params, stats, output_dir, models)
+    SR.run_analysis(params, n, stats, output_dir, models)
 
 
 if __name__ == "__main__":

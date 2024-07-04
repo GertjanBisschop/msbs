@@ -155,12 +155,9 @@ class Simulator(ancestry.SuperSimulator):
 
         return self.finalise(tables, nodes, simplify)
 
-    
     def insert_edges(self, lin, t, tables, nodes):
         for interval in lin.ancestry:
-            tables.edges.add_row(
-                interval.left, interval.right, len(nodes), lin.node
-            )
+            tables.edges.add_row(interval.left, interval.right, len(nodes), lin.node)
         nodes.append(ancestry.Node(time=t))
 
     def _intial_setup_stepwise_all(self, simplify=True, debug=False):
@@ -196,7 +193,7 @@ class Simulator(ancestry.SuperSimulator):
             t += t_inc
 
             if t_inc == t_re:  # recombination_event
-                idx = rng.choices(range(self.num_lineages), weights=lineage_links)[0]    
+                idx = rng.choices(range(self.num_lineages), weights=lineage_links)[0]
                 left_lineage = self.lineages[idx]
                 breakpoint = self.rng.integers(
                     left_lineage.left + 1, left_lineage.right
@@ -222,9 +219,7 @@ class Simulator(ancestry.SuperSimulator):
 
             else:  # decrement mutations
                 # pick random idx
-                idx = rng.choices(range(self.num_lineages), weights=num_muts)[
-                    0
-                ]
+                idx = rng.choices(range(self.num_lineages), weights=num_muts)[0]
                 # decrement
                 self.lineages[idx].value -= 1
                 # after decrementing
