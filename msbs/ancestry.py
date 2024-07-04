@@ -95,7 +95,7 @@ class Lineage:
                 left_ancestry.append(dataclasses.replace(interval, right=breakpoint))
                 right_ancestry.append(dataclasses.replace(interval, left=breakpoint))
         self.ancestry = left_ancestry
-        right_lin = Lineage(self.node, right_ancestry)
+        right_lin = Lineage(self.node, right_ancestry, self.value)
 
         return right_lin
 

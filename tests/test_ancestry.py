@@ -162,7 +162,7 @@ class TestSimFitnessClass:
     @pytest.mark.parametrize("seed", [12, 445343, 1930])
     def test_simple(self, seed):
         L = 100
-        r = 5e-7
+        r = 5e-6
         n = 4
         Ne = 10_000
 
@@ -205,7 +205,7 @@ class TestZeroClass:
             assert tree.num_roots == 1
 
     @pytest.mark.parametrize("seed", [962, 112254, 5478, 12032, 22080, 47908])
-    def test_stepwise(self, seed):
+    def test_stepwise_all(self, seed):
         L = 1000
         r = 1e-5
         n = 4
@@ -213,7 +213,7 @@ class TestZeroClass:
         U = 2e-3
         s = 1e-3
         sim = zeroclass.Simulator(L, r, n, Ne, seed=seed, U=U, s=s)
-        ts = sim._intial_setup_stepwise(simplify=False)
+        ts = sim._intial_setup_stepwise_all(simplify=False)
         assert ts.num_edges > 1
         tsfull = sim._complete(ts)
         for tree in tsfull.trees():

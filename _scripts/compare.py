@@ -1,4 +1,5 @@
 import abc
+import click
 import dataclasses
 import itertools
 import matplotlib.pyplot as plt
@@ -148,7 +149,10 @@ class SFSStat(Stat):
         )[1:-1]
 
     def group(self, all_reps):
-        return np.mean(all_reps, axis=1)
+        mean_over_reps = np.mean(all_reps, axis=1)
+        # to normalise: 
+        # mean_over_reps / np.sum(mean_over_reps, axis=-1)[:, np.newaxis]
+        return mean_over_reps
 
     def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
         labels = models + [
@@ -202,6 +206,16 @@ class ExtBranchStat(SummaryStat):
             polarised=True,
         )
         return sfs[1] / np.sum(sfs)
+    
+
+@dataclasses.dataclass
+class OldestRootStat(SummaryStat):
+    dim: int = 1
+    label: str = "oldest_root"
+    norm: bool = True
+
+    def compute(self, ts: tskit.TreeSequence) -> float:
+        return ts.max_root_time
 
 
 @dataclasses.dataclass
@@ -344,7 +358,7 @@ class SimRunner:
             )
             for seed in tqdm(seeds, desc="Running zeroclass model."):
                 sim.reset(seed)
-                yield sim.run()
+                yield sim.run(stepwise=True)
 
         elif model == "hudson_rescaled":
             for seed in tqdm(seeds, desc="Running hudson."):
@@ -501,32 +515,72 @@ def get_slim_param_dict(params):
         "NE": params["Ne"],
     }
 
-
-def main():
-    ## SLIM PARAMS
-    slim_params = {
-        "L": 100_000,
-        "r": 1e-8,
-        "n": 100,
-        "Ne": 10_000,
-        "U": 2e-3,  # /2?
-        "s": 1e-3,
-    }
+@click.command()
+@click.option("--scenario", default='simple')
+@click.option("--slim", default=None)
+@click.option("--n", default=5)
+def compare(scenario, slim, n):
+    possible_scenarios = {'human', 'dros', 'human_weak', 'human_strong', 'simple'}
+    if not scenario in possible_scenarios:
+        click.echo('Scenario not implemented.')
+        raise SystemExit(1)
+    if slim is None:
+        slim_trees = pathlib.Path("_output/trees/slim/recap")
+        assert scenario == 'simple'
+    else:
+        slim_trees = pathlib.Path(slim)
+    if not slim_trees.exists():
+        click.echo('Slim directory does not exist.')
+        raise SystemExit(1)
+    
     ## PARAMS
-    params = {
-        "L": 100_000,
-        "r": 1e-8,
-        "n": 5,
-        "Ne": 10_000,
-        "U": 1e-3,
-        "s": 1e-3,
+    params_scenarios = {  
+        'simple' : {
+            "L": 100_000,
+            "r": 1e-8,
+            "n": n,
+            "Ne": 10_000,
+            "U": 1e-3,
+            "s": 1e-3,
+        },
+        'human': { # U/s = 18
+            "L": 130_000_000,
+            "r": 1e-8,
+            "n": n,
+            "Ne": 10_000,
+            "U": 0.045,
+            "s": 2.5e-3,
+        },
+        'human_weak': { # U/s = 180
+            "L": 130_000_000,
+            "r": 1e-8,
+            "n": n,
+            "Ne": 10_000,
+            "U": 0.045,
+            "s": 2.5e-4,
+        },
+        'human_strong': { # U/s = 1.8
+            "L": 130_000_000,
+            "r": 1e-8,
+            "n": n,
+            "Ne": 10_000,
+            "U": 0.045,
+            "s": 2.5e-2,
+        },
+        'dros': { # U/s = 50
+            "L": 24_000_000,
+            "r": 1e-8,
+            "n": n,
+            "Ne": 1_000_000,
+            "U": 0.1,
+            "s": 2e-3,
+        },
     }
+    params = params_scenarios[scenario]
     # ploidy = 2
-    # slim_params = get_slim_param_dict(params)
-    slim_trees = pathlib.Path("_output/trees/slim/recap")
     num_reps = 1000
     SR = SimRunner(num_reps=num_reps, slim_trees=slim_trees)
-    output_dir = pathlib.Path("_output/fitnessclass_analysis")
+    output_dir = pathlib.Path(f"_output/compare/{scenario}")
     output_dir.mkdir(parents=True, exist_ok=True)
     stats = [
         ExtBranchStat(),
@@ -537,6 +591,7 @@ def main():
         FirstTreeTBL(),
         MidTreeTBL(mid=params["L"] // 2),
         MidTreeB2(mid=params["L"] // 2),
+        OldestRootStat(),
         CovStat(r=params["r"]),
         SFSStat(dim=params["n"] * 2 - 1),
     ]
@@ -547,4 +602,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    compare()
