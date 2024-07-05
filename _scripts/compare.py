@@ -368,7 +368,7 @@ class SimRunner:
             )
             for seed in tqdm(seeds, desc="Running zeroclass model."):
                 sim.reset(seed)
-                yield sim.run(stepwise=True)
+                yield sim.run(stepwise=True, ca_events=True)
 
         elif model == "hudson_rescaled":
             for seed in tqdm(seeds, desc="Running hudson."):

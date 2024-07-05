@@ -79,17 +79,19 @@ class Simulator(ancestry.SuperSimulator):
 
         return Q
 
-    def run(self, simplify=True, stepwise=False):
+    def run(self, simplify=True, stepwise=False, ca_events=False):
+        if ca_events:
+            assert stepwise
         if stepwise:
-            initial_state = self._intial_setup_stepwise_all(simplify=False)
+            initial_state = self._intial_setup_stepwise_all(ca_events=ca_events)
         else:
-            initial_state = self._intial_setup(simplify=False)
+            initial_state = self._intial_setup()
         ts = self._complete(initial_state)
         if simplify:
             ts = ts.simplify()
         return ts
 
-    def _intial_setup(self, simplify=True, debug=False):
+    def _intial_setup(self, simplify=False, debug=False):
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         tables.populations.metadata_schema = tskit.MetadataSchema.permissive_json()
@@ -160,7 +162,11 @@ class Simulator(ancestry.SuperSimulator):
             tables.edges.add_row(interval.left, interval.right, len(nodes), lin.node)
         nodes.append(ancestry.Node(time=t))
 
-    def _intial_setup_stepwise_all(self, simplify=True, debug=False):
+    def common_ancestor_waiting_time_from_rate(self, rate):
+        u = self.rng.expovariate(rate)
+        return self.ploidy * self.Ne * u
+
+    def _intial_setup_stepwise_all(self, simplify=False, debug=False, ca_events=False):
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         tables.populations.metadata_schema = tskit.MetadataSchema.permissive_json()
@@ -189,10 +195,18 @@ class Simulator(ancestry.SuperSimulator):
             assert total_num_muts >= len(num_muts)
             mu_rate = total_num_muts * self.s
             t_mu = math.inf if mu_rate == 0 else self.rng.exponential(1 / mu_rate)
-            t_inc = min(t_mu, t_re)
+            coal_rate = self.num_lineages * (self.num_lineages - 1) / 2
+            if not ca_events:
+                coal_rate = 0.0
+            t_ca = (
+                math.inf
+                if coal_rate == 0
+                else self.rng.exponential(1 / coal_rate) * self.ploidy * self.Ne
+            )
+            t_inc = min(t_mu, t_re, t_ca)
             t += t_inc
 
-            if t_inc == t_re:  # recombination_event
+            if t_inc == t_re:  # recombination event
                 idx = rng.choices(range(self.num_lineages), weights=lineage_links)[0]
                 left_lineage = self.lineages[idx]
                 breakpoint = self.rng.integers(
@@ -217,7 +231,7 @@ class Simulator(ancestry.SuperSimulator):
                 else:
                     self.insert_lineage(right_lineage)
 
-            else:  # decrement mutations
+            elif t_inc == t_mu:  # decrement mutations
                 # pick random idx
                 idx = rng.choices(range(self.num_lineages), weights=num_muts)[0]
                 # decrement
@@ -226,6 +240,20 @@ class Simulator(ancestry.SuperSimulator):
                 if self.lineages[idx].value == 0:
                     lin = self.remove_lineage(idx)
                     self.insert_edges(lin, t, tables, nodes)
+            else:  # common ancestor event
+                a = self.remove_lineage(self.rng.integers(self.num_lineages))
+                b = self.remove_lineage(self.rng.integers(self.num_lineages))
+                k = math.ceil((a.value + b.value) / 2)
+                c = ancestry.Lineage(len(nodes), [], k)
+                for interval, intersecting_lineages in ancestry.merge_ancestry([a, b]):
+                    c.ancestry.append(interval)
+                    for lineage in intersecting_lineages:
+                        tables.edges.add_row(
+                            interval.left, interval.right, c.node, lineage.node
+                        )
+
+                nodes.append(ancestry.Node(time=t))
+                self.insert_lineage(c)
 
         return self.finalise(tables, nodes, simplify)
 
