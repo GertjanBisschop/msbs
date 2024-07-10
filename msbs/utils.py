@@ -1,9 +1,10 @@
 import math
+import msprime
 import numpy as np
 import random
 import scipy.stats
 
-from scipy.special import gammaln
+from scipy.special import gammaln, exp1
 from typing import Callable, Tuple, Iterable, Generator
 
 
@@ -113,3 +114,18 @@ def markov_chain_expected_absorption(b_inv):
         z[i] = 0
 
     return np.flip(result)
+
+
+def generalized_gamma(x, y):
+    return exp1(x) - exp1(y)
+
+
+def stepwise_factory(initial_size, time_steps, ne_curve):
+    demography = msprime.Demography()
+    demography.add_population(initial_size=initial_size)
+    for i in range(time_steps.size):
+        demography.add_population_parameters_change(
+            time_steps[i], initial_size=ne_curve[i]
+        )
+
+    return demography

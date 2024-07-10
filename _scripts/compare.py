@@ -19,6 +19,8 @@ from typing import List, Dict
 from msbs import ancestry
 from msbs import fitnessclass
 from msbs import zeroclass
+from msbs import nett
+from msbs import utils
 
 _slim_executable = ["./_data/slim"]
 
@@ -68,13 +70,18 @@ class CovStat(Stat):
     dim: int = 20
     label: str = "CovDecay_"
     r: float = 0.0
+    L: float = 100_000
+    Ne: float = 10_000
+
+    def __post_init__(self):
+        self.max_length = 10 / (self.r * self.Ne) 
 
     def compute(self, ts: tskit.TreeSequence) -> float:
         # requires many observations of t_i and t_j at given distances
         # t_i can stay same fixed value
         num_points = self.dim
         result = np.zeros(num_points, dtype=np.float64)
-        points = np.arange(num_points + 1) / (num_points + 1) * ts.sequence_length
+        points = np.arange(num_points + 1) / (num_points + 1) * self.max_length
         u, v = random.sample(range(ts.num_samples), 2)
 
         # collect info on pairwaise coalescence times
@@ -101,7 +108,6 @@ class CovStat(Stat):
         return (r + 18) / (r**2 + 13 * r + 18)
 
     def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
-        sequence_length = 100_000
         labels = models + [
             "neutral",
             "neutral rescaled",
@@ -112,10 +118,10 @@ class CovStat(Stat):
         b = (
             np.arange(self.dim + 1)
             / (self.dim + 1)
-            * sequence_length
+            * self.max_length
             * self.r
             * 4
-            * 10_000
+            * self.Ne
         )
         marker = itertools.cycle((".", "+", "v", "^"))
         for i, model in enumerate(labels):
@@ -368,7 +374,7 @@ class SimRunner:
             )
             for seed in tqdm(seeds, desc="Running zeroclass model."):
                 sim.reset(seed)
-                yield sim.run(stepwise=True, ca_events=True)
+                yield sim.run(stepwise=True, ca_events=True, end_time=None)
 
         elif model == "hudson_rescaled":
             for seed in tqdm(seeds, desc="Running hudson."):
@@ -379,6 +385,22 @@ class SimRunner:
                     population_size=params["Ne"] * np.exp(-params["U"] / params["s"]),
                     random_seed=seed,
                 )
+
+        elif model == "stepwise":
+            demography = utils.stepwise_factory(
+                params["Ne"],
+                np.arange(1, 11) * 1000,
+                np.array([10_000, 9_325, 8820, 8173, 7630, 6840, 6807, 5795, 5790, 5375]),
+            )
+            sim = nett.StepWiseSimulator(
+                L=params["L"],
+                r=params["r"],
+                n=n,
+                Ne=params["Ne"],
+            )
+
+            for seed in tqdm(seeds, desc="Running stepwise."):
+                yield sim.run(demography, seed=seed)
 
         else:
             for seed in tqdm(seeds, desc="Running hudson."):
@@ -429,10 +451,14 @@ class SimRunner:
             )
             yield rts
 
-    def _process_slim_trees(self, n):
+    def _process_slim_trees(self, n, L):
         ts_paths = os.listdir(self.slim_trees)
         for i in range(self.num_reps):
             ts = tskit.load(self.slim_trees / ts_paths[i])
+            if ts.sequence_length > L + 1:
+                mid = ts.sequence_length // 2
+                interval = [(mid - L//2, mid + L//2)]
+                ts = ts.keep_intervals(interval).ltrim().rtrim()
             samples = self.rng.choice(np.arange(ts.num_samples), replace=False, size=n)
             ts_simpl = ts.simplify(samples)
             yield ts_simpl
@@ -468,7 +494,7 @@ class SimRunner:
 
         # TODO: run bs sims (forwards in time)
         for i, ts in tqdm(
-            enumerate(self._process_slim_trees(2 * n)),
+            enumerate(self._process_slim_trees(2 * n, params["L"])),
             total=self.num_reps,
             desc="SLiM trees",
         ):
@@ -532,14 +558,14 @@ def get_slim_param_dict(params):
 @click.option("--scenario", default="simple")
 @click.option("--slim", default=None)
 @click.option("--n", default=5)
-def compare(scenario, slim, n):
+@click.option("--reps", default=100)
+def compare(scenario, slim, n, reps):
     possible_scenarios = {"human", "dros", "human_weak", "human_strong", "simple"}
     if not scenario in possible_scenarios:
         click.echo("Scenario not implemented.")
         raise SystemExit(1)
     if slim is None:
-        slim_trees = pathlib.Path("_output/trees/slim/recap")
-        assert scenario == "simple"
+        slim_trees = pathlib.Path(f"_output/trees/slim/{scenario}")
     else:
         slim_trees = pathlib.Path(slim)
     if not slim_trees.exists():
@@ -547,6 +573,7 @@ def compare(scenario, slim, n):
         raise SystemExit(1)
 
     ## PARAMS
+    temp_L = 1_000_000
     params_scenarios = {
         "simple": {  # U/s = 1, Ns*e**(-U/s) = 3.67
             "L": 100_000,
@@ -556,10 +583,11 @@ def compare(scenario, slim, n):
             "s": 1e-3,
         },
         "human": {  # U/s = 18, Ns*e**(-U/s) = 3.8e-7
-            "L": 130_000_000,
+            #"L": 130_000_000,
+            "L": temp_L,
             "r": 1e-8,
             "Ne": 10_000,
-            "U": 0.045,
+            "U": 0.045 / 130_000_000 * temp_L,
             "s": 2.5e-3,
         },
         "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70
@@ -586,8 +614,8 @@ def compare(scenario, slim, n):
     }
     params = params_scenarios[scenario]
     # ploidy = 2
-    num_reps = 1000
-    SR = SimRunner(num_reps=num_reps, slim_trees=slim_trees)
+    #num_reps = 1000
+    SR = SimRunner(num_reps=reps, slim_trees=slim_trees)
     output_dir = pathlib.Path(f"_output/compare/{scenario}")
     output_dir.mkdir(parents=True, exist_ok=True)
     stats = [
@@ -600,11 +628,11 @@ def compare(scenario, slim, n):
         MidTreeTBL(mid=params["L"] // 2),
         MidTreeB2(mid=params["L"] // 2),
         OldestRootStat(),
-        CovStat(r=params["r"]),
+        CovStat(r=params["r"], L=params["L"], Ne=params["Ne"]),
         SFSStat(dim=n * 2 - 1),
     ]
     # models = ["fitnessclass", "zeroclass"]
-    models = ["zeroclass"]
+    models = ["zeroclass", "stepwise"]
     # models = []
     SR.run_analysis(params, n, stats, output_dir, models)
 

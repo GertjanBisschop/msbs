@@ -79,11 +79,13 @@ class Simulator(ancestry.SuperSimulator):
 
         return Q
 
-    def run(self, simplify=True, stepwise=False, ca_events=False):
+    def run(self, simplify=True, stepwise=False, ca_events=False, end_time=None):
         if ca_events:
             assert stepwise
         if stepwise:
-            initial_state = self._intial_setup_stepwise_all(ca_events=ca_events)
+            initial_state = self._intial_setup_stepwise_all(
+                ca_events=ca_events, end_time=end_time
+            )
         else:
             initial_state = self._intial_setup()
         ts = self._complete(initial_state)
@@ -166,7 +168,9 @@ class Simulator(ancestry.SuperSimulator):
         u = self.rng.expovariate(rate)
         return self.ploidy * self.Ne * u
 
-    def _intial_setup_stepwise_all(self, simplify=False, debug=False, ca_events=False):
+    def _intial_setup_stepwise_all(
+        self, simplify=False, debug=False, ca_events=False, end_time=None
+    ):
         tables = tskit.TableCollection(self.L)
         tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         tables.populations.metadata_schema = tskit.MetadataSchema.permissive_json()
@@ -174,6 +178,8 @@ class Simulator(ancestry.SuperSimulator):
         tables.time_units = "generations"
         rng = random.Random(self.rng.integers(1))
         nodes = []
+        if end_time is None:
+            end_time = math.inf
         t = 0
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
@@ -204,8 +210,18 @@ class Simulator(ancestry.SuperSimulator):
                 else self.rng.exponential(1 / coal_rate) * self.ploidy * self.Ne
             )
             t_inc = min(t_mu, t_re, t_ca)
-            t += t_inc
+            if end_time < t_inc + t:
+                t = end_time
+                # take care of all floating lineages
+                for lin in self.lineages:
+                    for interval in lin.ancestry:
+                        tables.edges.add_row(
+                            interval.left, interval.right, len(nodes), lin.node
+                        )
+                    nodes.append(ancestry.Node(time=t))
+                break
 
+            t += t_inc
             if t_inc == t_re:  # recombination event
                 idx = rng.choices(range(self.num_lineages), weights=lineage_links)[0]
                 left_lineage = self.lineages[idx]
@@ -258,6 +274,9 @@ class Simulator(ancestry.SuperSimulator):
         return self.finalise(tables, nodes, simplify)
 
     def _complete(self, ts):
+        # see Nicolaisen and Desai 2013
+        # R = (self.r * self.L)
+        # rescale = np.exp(-self.U / (self.s + R / 2))
         rescale = np.exp(-self.U / self.s)
         return msprime.sim_ancestry(
             initial_state=ts,

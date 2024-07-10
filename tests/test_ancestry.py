@@ -5,6 +5,7 @@ import msbs.bins as bins
 import msbs.zeng as zeng
 import msbs.fitnessclass as fitnessclass
 import msbs.zeroclass as zeroclass
+import msbs.nett as nett
 
 
 class TestSimAncestry:
@@ -232,4 +233,40 @@ class TestZeroClass:
         assert ts.num_edges > 1
         tsfull = sim._complete(ts)
         for tree in tsfull.trees():
+            assert tree.num_roots == 1
+
+    @pytest.mark.parametrize("seed", [962, 112254])
+    def test_stepwise_all_endtime(self, seed):
+        L = 1000
+        r = 1e-5
+        n = 4
+        Ne = 10_000
+        U = 2e-3
+        s = 1e-3
+        end_time = 10
+        sim = zeroclass.Simulator(L, r, n, Ne, seed=seed, U=U, s=s)
+        ts = sim._intial_setup_stepwise_all(ca_events=True, end_time=end_time)
+        assert ts.max_root_time == end_time
+        assert ts.num_edges > 1
+        tsfull = sim._complete(ts)
+        for tree in tsfull.trees():
+            assert tree.num_roots == 1
+
+
+class TestNeTT:
+    def test_simple(self):
+        L = 1000
+        r = 1e-8
+        n = 8
+        Ne = 10_000
+        u = 2e-3
+        s = 1e-3
+        seed = 41
+        
+        time_steps = np.arange(1000, 2000, 3000)
+        ne_curve = np.array([1000.0, 2000.0, 10000.0])
+        sim = nett.StepWiseSimulator(L, r, n, Ne)
+        d = sim.stepwise_factory(Ne, time_steps, ne_curve)
+        ts = sim.run(d)
+        for tree in ts.trees():
             assert tree.num_roots == 1

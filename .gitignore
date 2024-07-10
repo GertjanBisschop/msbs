@@ -130,3 +130,6 @@ dmypy.json
 
 # Data
 *_data*/
+
+# Scripts
+_scripts/perf.py
