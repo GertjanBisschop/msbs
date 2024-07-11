@@ -14,6 +14,7 @@ from msbs import utils
 class Simulator(ancestry.SuperSimulator):
     U: float = 2e-3
     s: float = 1e-3
+    bounded: bool = False
 
     def __post_init__(self):
         num_sig = 2
@@ -21,10 +22,12 @@ class Simulator(ancestry.SuperSimulator):
         self.num_fitness_classes = 2 * math.ceil(num_sig * math.sqrt(self.mean_load))
         self.num_lineages = 0
         self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
-        self.Q = self.generate_q()
         self.rng = np.random.default_rng(self.seed)
         self.lineages = []
-        self.B_inv = np.linalg.inv(np.flip(self.Q)[:-1, :-1])
+        self.bound = math.inf
+        if self.bounded:
+            # use distribution here??
+            self.bound = 1 / self.s
 
     def finalise(self, tables, nodes, simplify):
         for node in nodes:
@@ -66,98 +69,24 @@ class Simulator(ancestry.SuperSimulator):
         value += self.rng.poisson(self.mean_load * (1 - p))
         return self.adjust_fitness_class(value)
 
-    def generate_q(self, num_sig=2):
-        """
-        Generates rate matrix to transition from class i to j.
-        Gaining or losing a mutation happens at rate s
-        """
-        # determine expected variance in k
-        Q = np.zeros((self.num_fitness_classes, self.num_fitness_classes))
-        Q += np.eye(self.num_fitness_classes, k=-1)
-        Q *= self.s * (np.arange(1, self.num_fitness_classes + 1) + self.min_fitness)
-        Q[np.diag_indices(Q.shape[0])] = -np.sum(Q, axis=1)
-
-        return Q
-
-    def run(self, simplify=True, stepwise=False, ca_events=False, end_time=None):
-        if ca_events:
-            assert stepwise
-        if stepwise:
-            initial_state = self._intial_setup_stepwise_all(
-                ca_events=ca_events, end_time=end_time
-            )
-        else:
-            initial_state = self._intial_setup()
+    def run(self, simplify=True, ca_events=False, end_time=None):
+        initial_state = self._initial_setup(ca_events=ca_events, end_time=end_time)
         ts = self._complete(initial_state)
         if simplify:
             ts = ts.simplify()
         return ts
 
-    def _intial_setup(self, simplify=False, debug=False):
-        tables = tskit.TableCollection(self.L)
-        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
-        tables.populations.metadata_schema = tskit.MetadataSchema.permissive_json()
-        tables.populations.add_row()
-        tables.time_units = "generations"
-        nodes = []
-        for _ in range(self.n * self.ploidy):
-            segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
-            k = self.adjust_fitness_class(self.rng.poisson(self.mean_load))
-            self.lineages.append(ancestry.Lineage(len(nodes), segment_chain, k))
-            nodes.append(ancestry.Node(time=0, flags=tskit.NODE_IS_SAMPLE))
-        mu_free_times = utils.markov_chain_expected_absorption(self.B_inv)
-
-        d = collections.deque()
-        for lineage in self.lineages:
-            t = 0
-            d.append((t, lineage))
-            while d:
-                t, lineage = d.popleft()
-                z = None
-                re_rate = lineage.num_recombination_links * self.r
-                k = lineage.value
-                if k > 0:
-                    assert k < self.num_fitness_classes
-                    t_mu = mu_free_times[k - 1]
-                    t_re = (
-                        math.inf if re_rate == 0 else self.rng.exponential(1 / re_rate)
-                    )
-                    t_inc = min(t_mu, t_re)
-                    t += t_inc
-                    if t_inc == t_re:  # recombination_event
-                        left_lineage = lineage
-                        breakpoint = self.rng.integers(
-                            left_lineage.left + 1, left_lineage.right
-                        )
-                        assert left_lineage.left < breakpoint < left_lineage.right
-                        right_lineage = left_lineage.split(breakpoint)
-                        # set values of left and right lineages
-                        p = breakpoint / self.L
-                        left_lineage.value = self.set_post_rec_fitness_class(
-                            left_lineage.value, p
-                        )
-                        right_lineage.value = self.set_post_rec_fitness_class(
-                            right_lineage.value, 1 - p
-                        )
-                        d.append((t, left_lineage))
-                        d.append((t, right_lineage))
-                    else:  # loose all mutations
-                        lineage.value = 0
-                        z = lineage
-                else:
-                    if t != 0:
-                        # add into initial_state immediately
-                        z = lineage
-
-                if z is not None:
-                    # add into intial state
-                    for interval in z.ancestry:
-                        tables.edges.add_row(
-                            interval.left, interval.right, len(nodes), z.node
-                        )
-                    nodes.append(ancestry.Node(time=t))
-
-        return self.finalise(tables, nodes, simplify)
+    def _complete(self, ts):
+        # see Nicolaisen and Desai 2013
+        # R = (self.r * self.L)
+        # rescale = np.exp(-self.U / (self.s + R / 2))
+        rescale = np.exp(-self.U / self.s)
+        return msprime.sim_ancestry(
+            initial_state=ts,
+            recombination_rate=self.r,
+            population_size=self.Ne * rescale,
+            ploidy=self.ploidy,
+        )
 
     def insert_edges(self, lin, t, tables, nodes):
         for interval in lin.ancestry:
@@ -168,7 +97,9 @@ class Simulator(ancestry.SuperSimulator):
         u = self.rng.expovariate(rate)
         return self.ploidy * self.Ne * u
 
-    def _intial_setup_stepwise_all(
+
+class ZeroClassSimulator(Simulator):
+    def _initial_setup(
         self, simplify=False, debug=False, ca_events=False, end_time=None
     ):
         tables = tskit.TableCollection(self.L)
@@ -181,6 +112,8 @@ class Simulator(ancestry.SuperSimulator):
         if end_time is None:
             end_time = math.inf
         t = 0
+        end_time = min(end_time, self.bound)
+
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
             k = self.adjust_fitness_class(self.rng.poisson(self.mean_load))
@@ -273,14 +206,90 @@ class Simulator(ancestry.SuperSimulator):
 
         return self.finalise(tables, nodes, simplify)
 
-    def _complete(self, ts):
-        # see Nicolaisen and Desai 2013
-        # R = (self.r * self.L)
-        # rescale = np.exp(-self.U / (self.s + R / 2))
-        rescale = np.exp(-self.U / self.s)
-        return msprime.sim_ancestry(
-            initial_state=ts,
-            recombination_rate=self.r,
-            population_size=self.Ne * rescale,
-            ploidy=self.ploidy,
-        )
+
+class OGZeroClassSimulator(Simulator):
+    def __post_init__(self):
+        super().__post_init__()
+        self.Q = self.generate_q()
+        self.B_inv = np.linalg.inv(np.flip(self.Q)[:-1, :-1])
+
+    def generate_q(self, num_sig=2):
+        """
+        Generates rate matrix to transition from class i to j.
+        Gaining or losing a mutation happens at rate s
+        """
+        # determine expected variance in k
+        Q = np.zeros((self.num_fitness_classes, self.num_fitness_classes))
+        Q += np.eye(self.num_fitness_classes, k=-1)
+        Q *= self.s * (np.arange(1, self.num_fitness_classes + 1) + self.min_fitness)
+        Q[np.diag_indices(Q.shape[0])] = -np.sum(Q, axis=1)
+
+        return Q
+
+    def _initial_setup(
+        self, simplify=False, debug=False, ca_events=False, end_time=None
+    ):
+        tables = tskit.TableCollection(self.L)
+        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables.populations.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables.populations.add_row()
+        tables.time_units = "generations"
+        nodes = []
+        for _ in range(self.n * self.ploidy):
+            segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
+            k = self.adjust_fitness_class(self.rng.poisson(self.mean_load))
+            self.lineages.append(ancestry.Lineage(len(nodes), segment_chain, k))
+            nodes.append(ancestry.Node(time=0, flags=tskit.NODE_IS_SAMPLE))
+        mu_free_times = utils.markov_chain_expected_absorption(self.B_inv)
+
+        d = collections.deque()
+        for lineage in self.lineages:
+            t = 0
+            d.append((t, lineage))
+            while d:
+                t, lineage = d.popleft()
+                z = None
+                re_rate = lineage.num_recombination_links * self.r
+                k = lineage.value
+                if k > 0:
+                    assert k < self.num_fitness_classes
+                    t_mu = mu_free_times[k - 1]
+                    t_re = (
+                        math.inf if re_rate == 0 else self.rng.exponential(1 / re_rate)
+                    )
+                    t_inc = min(t_mu, t_re)
+                    t += t_inc
+                    if t_inc == t_re:  # recombination_event
+                        left_lineage = lineage
+                        breakpoint = self.rng.integers(
+                            left_lineage.left + 1, left_lineage.right
+                        )
+                        assert left_lineage.left < breakpoint < left_lineage.right
+                        right_lineage = left_lineage.split(breakpoint)
+                        # set values of left and right lineages
+                        p = breakpoint / self.L
+                        left_lineage.value = self.set_post_rec_fitness_class(
+                            left_lineage.value, p
+                        )
+                        right_lineage.value = self.set_post_rec_fitness_class(
+                            right_lineage.value, 1 - p
+                        )
+                        d.append((t, left_lineage))
+                        d.append((t, right_lineage))
+                    else:  # loose all mutations
+                        lineage.value = 0
+                        z = lineage
+                else:
+                    if t != 0:
+                        # add into initial_state immediately
+                        z = lineage
+
+                if z is not None:
+                    # add into intial state
+                    for interval in z.ancestry:
+                        tables.edges.add_row(
+                            interval.left, interval.right, len(nodes), z.node
+                        )
+                    nodes.append(ancestry.Node(time=t))
+
+        return self.finalise(tables, nodes, simplify)

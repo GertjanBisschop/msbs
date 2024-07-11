@@ -198,7 +198,7 @@ class TestZeroClass:
         Ne = 10_000
         U = 2e-3
         s = 1e-3
-        sim = zeroclass.Simulator(L, r, n, Ne, seed=seed, U=U, s=s)
+        sim = zeroclass.OGZeroClassSimulator(L, r, n, Ne, seed=seed, U=U, s=s)
         ts = sim._intial_setup()
         assert ts.num_edges > 1
         tsfull = sim._complete(ts)
@@ -213,8 +213,8 @@ class TestZeroClass:
         Ne = 10_000
         U = 2e-3
         s = 1e-3
-        sim = zeroclass.Simulator(L, r, n, Ne, seed=seed, U=U, s=s)
-        ts = sim._intial_setup_stepwise_all()
+        sim = zeroclass.ZeroClassSimulator(L, r, n, Ne, seed=seed, U=U, s=s)
+        ts = sim._initial_setup()
         assert ts.num_edges > 1
         tsfull = sim._complete(ts)
         for tree in tsfull.trees():
@@ -228,8 +228,8 @@ class TestZeroClass:
         Ne = 10_000
         U = 2e-3
         s = 1e-3
-        sim = zeroclass.Simulator(L, r, n, Ne, seed=seed, U=U, s=s)
-        ts = sim._intial_setup_stepwise_all(ca_events=True)
+        sim = zeroclass.ZeroClassSimulator(L, r, n, Ne, seed=seed, U=U, s=s)
+        ts = sim._initial_setup(ca_events=True)
         assert ts.num_edges > 1
         tsfull = sim._complete(ts)
         for tree in tsfull.trees():
@@ -244,8 +244,8 @@ class TestZeroClass:
         U = 2e-3
         s = 1e-3
         end_time = 10
-        sim = zeroclass.Simulator(L, r, n, Ne, seed=seed, U=U, s=s)
-        ts = sim._intial_setup_stepwise_all(ca_events=True, end_time=end_time)
+        sim = zeroclass.ZeroClassSimulator(L, r, n, Ne, seed=seed, U=U, s=s)
+        ts = sim._initial_setup(ca_events=True, end_time=end_time)
         assert ts.max_root_time == end_time
         assert ts.num_edges > 1
         tsfull = sim._complete(ts)
@@ -262,7 +262,7 @@ class TestNeTT:
         u = 2e-3
         s = 1e-3
         seed = 41
-        
+
         time_steps = np.arange(1000, 2000, 3000)
         ne_curve = np.array([1000.0, 2000.0, 10000.0])
         sim = nett.StepWiseSimulator(L, r, n, Ne)

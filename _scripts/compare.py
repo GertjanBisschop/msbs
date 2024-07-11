@@ -74,7 +74,7 @@ class CovStat(Stat):
     Ne: float = 10_000
 
     def __post_init__(self):
-        self.max_length = 10 / (self.r * self.Ne) 
+        self.max_length = 10 / (self.r * self.Ne)
 
     def compute(self, ts: tskit.TreeSequence) -> float:
         # requires many observations of t_i and t_j at given distances
@@ -153,13 +153,73 @@ class SFSStat(Stat):
         afs = ts.allele_frequency_spectrum(
             polarised=True, mode="branch", span_normalise=True
         )[1:-1]
-        return afs / np.sum(afs)
+        return afs
 
     def group(self, all_reps):
         mean_over_reps = np.mean(all_reps, axis=1)
         return mean_over_reps
 
     def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
+        self._plot_absolute(data, outfile, models)
+        self._plot_relative_error(data, outfile, models)
+
+    def _plot_relative_error(
+        self, data: np.ndarray, outfile: pathlib.Path, models: List[str]
+    ) -> None:
+        labels = models + [
+            "neutral",
+            "neutral rescaled",
+            "slim",
+        ]
+        # group observations: shape: (num_models, num_reps, num_points)
+        a = self.group(data)
+        a_rel = np.abs(a - a[-1])
+        if self.dim <= 10:
+            x_axis = np.arange(1, a.shape[-1] + 1)
+            p = len(x_axis)
+            p1 = p * 2.5
+            p2 = p * 1.5
+            fig = plt.figure(figsize=(p1, p2))
+            ax = fig.gca()
+            num_bars = len(labels) - 1
+            width = 1 / (num_bars)
+            half_width = 1 / 2 * width
+            half_num_bars = np.floor(num_bars / 2)
+
+            for i in range(num_bars):
+                j = i - half_num_bars
+                counts = a_rel[i]
+                ax.bar(
+                    x_axis + j * half_width,
+                    counts,
+                    label=labels[i],
+                    width=half_width,
+                    align="center",
+                )
+            ax.xaxis.set_tick_params(which="major", labelsize=p2)
+
+        else:
+            # continuous plot
+            # only plot first q alleles
+            q = self.dim // 5
+            x_axis = np.arange(1, q)
+            fig = plt.figure()
+            ax = fig.gca()
+            for i in range(len(labels) - 1):
+                ax.plot(x_axis, a_rel[i, : q - 1], label=labels[i], marker=".")
+
+        ax.legend(loc="upper right")
+        plt.title(self.label)
+        parts = list(outfile.parts)
+        temp = parts[-1].split("_")
+        temp[0] = "SFSRel"
+        parts[-1] = "_".join(temp)
+        fig.savefig(pathlib.Path(*parts))
+        plt.close("all")
+
+    def _plot_absolute(
+        self, data: np.ndarray, outfile: pathlib.Path, models: List[str]
+    ) -> None:
         labels = models + [
             "neutral",
             "neutral rescaled",
@@ -363,7 +423,7 @@ class SimRunner:
                 yield sim.run()
         elif model == "zeroclass":
 
-            sim = zeroclass.Simulator(
+            sim = zeroclass.ZeroClassSimulator(
                 L=params["L"],
                 r=params["r"],
                 n=n,
@@ -374,7 +434,7 @@ class SimRunner:
             )
             for seed in tqdm(seeds, desc="Running zeroclass model."):
                 sim.reset(seed)
-                yield sim.run(stepwise=True, ca_events=True, end_time=None)
+                yield sim.run(ca_events=True, end_time=None)
 
         elif model == "hudson_rescaled":
             for seed in tqdm(seeds, desc="Running hudson."):
@@ -390,7 +450,9 @@ class SimRunner:
             demography = utils.stepwise_factory(
                 params["Ne"],
                 np.arange(1, 11) * 1000,
-                np.array([10_000, 9_325, 8820, 8173, 7630, 6840, 6807, 5795, 5790, 5375]),
+                np.array(
+                    [10_000, 9_325, 8820, 8173, 7630, 6840, 6807, 5795, 5790, 5375]
+                ),
             )
             sim = nett.StepWiseSimulator(
                 L=params["L"],
@@ -457,7 +519,7 @@ class SimRunner:
             ts = tskit.load(self.slim_trees / ts_paths[i])
             if ts.sequence_length > L + 1:
                 mid = ts.sequence_length // 2
-                interval = [(mid - L//2, mid + L//2)]
+                interval = [(mid - L // 2, mid + L // 2)]
                 ts = ts.keep_intervals(interval).ltrim().rtrim()
             samples = self.rng.choice(np.arange(ts.num_samples), replace=False, size=n)
             ts_simpl = ts.simplify(samples)
@@ -575,36 +637,36 @@ def compare(scenario, slim, n, reps):
     ## PARAMS
     temp_L = 1_000_000
     params_scenarios = {
-        "simple": {  # U/s = 1, Ns*e**(-U/s) = 3.67
+        "simple": {  # U/s = 1, Ns*e**(-U/s) = 3.67, Ns = 10
             "L": 100_000,
             "r": 1e-8,
             "Ne": 10_000,
             "U": 1e-3,
             "s": 1e-3,
         },
-        "human": {  # U/s = 18, Ns*e**(-U/s) = 3.8e-7
-            #"L": 130_000_000,
+        "human": {  # U/s = 18, Ns*e**(-U/s) = 3.8e-7, Ns = 25
+            # "L": 130_000_000,
             "L": temp_L,
             "r": 1e-8,
             "Ne": 10_000,
             "U": 0.045 / 130_000_000 * temp_L,
             "s": 2.5e-3,
         },
-        "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70
+        "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70, Ns = 2.5
             "L": 130_000_000,
             "r": 1e-8,
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-4,
         },
-        "human_strong": {  # U/s = 1.8, Ns*e**(-U/s) = 41
+        "human_strong": {  # U/s = 1.8, Ns*e**(-U/s) = 41, Ns = 250
             "L": 130_000_000,
             "r": 1e-8,
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-2,
         },
-        "dros": {  # U/s = 50, Ns*e**(-U/s) = 3.8e-19
+        "dros": {  # U/s = 50, Ns*e**(-U/s) = 3.8e-19, Ns = 2e3
             "L": 24_000_000,
             "r": 1e-8,
             "Ne": 1_000_000,
@@ -614,21 +676,21 @@ def compare(scenario, slim, n, reps):
     }
     params = params_scenarios[scenario]
     # ploidy = 2
-    #num_reps = 1000
+    # num_reps = 1000
     SR = SimRunner(num_reps=reps, slim_trees=slim_trees)
     output_dir = pathlib.Path(f"_output/compare/{scenario}")
     output_dir.mkdir(parents=True, exist_ok=True)
     stats = [
-        ExtBranchStat(),
-        DiversityStat(),
-        TajimasDStat(),
-        NumNodesStat(),
-        NumTreesStat(),
-        FirstTreeTBL(),
-        MidTreeTBL(mid=params["L"] // 2),
-        MidTreeB2(mid=params["L"] // 2),
-        OldestRootStat(),
-        CovStat(r=params["r"], L=params["L"], Ne=params["Ne"]),
+        # ExtBranchStat(),
+        # DiversityStat(),
+        # TajimasDStat(),
+        # NumNodesStat(),
+        # NumTreesStat(),
+        # FirstTreeTBL(),
+        # MidTreeTBL(mid=params["L"] // 2),
+        # MidTreeB2(mid=params["L"] // 2),
+        # OldestRootStat(),
+        # CovStat(r=params["r"], L=params["L"], Ne=params["Ne"]),
         SFSStat(dim=n * 2 - 1),
     ]
     # models = ["fitnessclass", "zeroclass"]
