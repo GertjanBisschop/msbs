@@ -681,16 +681,16 @@ def compare(scenario, slim, n, reps):
     output_dir = pathlib.Path(f"_output/compare/{scenario}")
     output_dir.mkdir(parents=True, exist_ok=True)
     stats = [
-        # ExtBranchStat(),
-        # DiversityStat(),
-        # TajimasDStat(),
-        # NumNodesStat(),
-        # NumTreesStat(),
-        # FirstTreeTBL(),
-        # MidTreeTBL(mid=params["L"] // 2),
-        # MidTreeB2(mid=params["L"] // 2),
-        # OldestRootStat(),
-        # CovStat(r=params["r"], L=params["L"], Ne=params["Ne"]),
+        ExtBranchStat(),
+        DiversityStat(),
+        TajimasDStat(),
+        NumNodesStat(),
+        NumTreesStat(),
+        FirstTreeTBL(),
+        MidTreeTBL(mid=params["L"] // 2),
+        MidTreeB2(mid=params["L"] // 2),
+        OldestRootStat(),
+        CovStat(r=params["r"], L=params["L"], Ne=params["Ne"]),
         SFSStat(dim=n * 2 - 1),
     ]
     # models = ["fitnessclass", "zeroclass"]

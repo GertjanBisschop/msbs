@@ -17,11 +17,9 @@ class Simulator(ancestry.SuperSimulator):
     bounded: bool = False
 
     def __post_init__(self):
-        num_sig = 2
         self.mean_load = self.U * (1 - self.s) / self.s
-        self.num_fitness_classes = 2 * math.ceil(num_sig * math.sqrt(self.mean_load))
         self.num_lineages = 0
-        self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
+        self.min_fitness = 0
         self.rng = np.random.default_rng(self.seed)
         self.lineages = []
         self.bound = math.inf
@@ -59,15 +57,15 @@ class Simulator(ancestry.SuperSimulator):
         self.lineages.append(lineage)
         self.num_lineages += 1
 
-    def adjust_fitness_class(self, k):
-        k -= self.min_fitness
-        return int(max(0, min(self.num_fitness_classes - 1, k)))
-
     def set_post_rec_fitness_class(self, value, p):
-        start_value = value + self.min_fitness
-        value = self.rng.binomial(start_value, p)
-        value += self.rng.poisson(self.mean_load * (1 - p))
-        return self.adjust_fitness_class(value)
+        start_value = value
+        left_value = self.rng.binomial(start_value, p)
+        # assign the remaining mutations to the right lineage
+        right_value = start_value - left_value
+        assert right_value >= 0
+        left_value += self.rng.poisson(self.mean_load * (1 - p))
+        right_value += self.rng.poisson(self.mean_load * p)
+        return left_value, right_value
 
     def run(self, simplify=True, ca_events=False, end_time=None):
         initial_state = self._initial_setup(ca_events=ca_events, end_time=end_time)
@@ -88,7 +86,7 @@ class Simulator(ancestry.SuperSimulator):
             ploidy=self.ploidy,
         )
 
-    def insert_edges(self, lin, t, tables, nodes):
+    def record_edges(self, lin, t, tables, nodes):
         for interval in lin.ancestry:
             tables.edges.add_row(interval.left, interval.right, len(nodes), lin.node)
         nodes.append(ancestry.Node(time=t))
@@ -116,8 +114,8 @@ class ZeroClassSimulator(Simulator):
 
         for _ in range(self.n * self.ploidy):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
-            k = self.adjust_fitness_class(self.rng.poisson(self.mean_load))
-            if k > 0:
+            k = self.rng.poisson(self.mean_load)
+            if k > self.min_fitness:
                 self.insert_lineage(ancestry.Lineage(len(nodes), segment_chain, k))
             nodes.append(ancestry.Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
@@ -147,11 +145,7 @@ class ZeroClassSimulator(Simulator):
                 t = end_time
                 # take care of all floating lineages
                 for lin in self.lineages:
-                    for interval in lin.ancestry:
-                        tables.edges.add_row(
-                            interval.left, interval.right, len(nodes), lin.node
-                        )
-                    nodes.append(ancestry.Node(time=t))
+                    self.record_edges(lin, t, tables, nodes)
                 break
 
             t += t_inc
@@ -166,17 +160,14 @@ class ZeroClassSimulator(Simulator):
                 assert right_lineage.value == left_lineage.value
                 # set values of left and right lineages
                 p = breakpoint / self.L
-                left_lineage.value = self.set_post_rec_fitness_class(
-                    left_lineage.value, p
-                )
-                right_lineage.value = self.set_post_rec_fitness_class(
-                    right_lineage.value, 1 - p
-                )
-                if left_lineage.value == 0:
+                lvalue, rvalue = self.set_post_rec_fitness_class(left_lineage.value, p)
+                left_lineage.value = lvalue
+                right_lineage.value = rvalue
+                if left_lineage.value == self.min_fitness:
                     _ = self.remove_lineage(idx)
-                    self.insert_edges(left_lineage, t, tables, nodes)
-                if right_lineage.value == 0:
-                    self.insert_edges(right_lineage, t, tables, nodes)
+                    self.record_edges(left_lineage, t, tables, nodes)
+                if right_lineage.value == self.min_fitness:
+                    self.record_edges(right_lineage, t, tables, nodes)
                 else:
                     self.insert_lineage(right_lineage)
 
@@ -186,9 +177,9 @@ class ZeroClassSimulator(Simulator):
                 # decrement
                 self.lineages[idx].value -= 1
                 # after decrementing
-                if self.lineages[idx].value == 0:
+                if self.lineages[idx].value == self.min_fitness:
                     lin = self.remove_lineage(idx)
-                    self.insert_edges(lin, t, tables, nodes)
+                    self.record_edges(lin, t, tables, nodes)
             else:  # common ancestor event
                 a = self.remove_lineage(self.rng.integers(self.num_lineages))
                 b = self.remove_lineage(self.rng.integers(self.num_lineages))
@@ -210,8 +201,15 @@ class ZeroClassSimulator(Simulator):
 class OGZeroClassSimulator(Simulator):
     def __post_init__(self):
         super().__post_init__()
+        num_sig = 2
+        self.num_fitness_classes = 2 * math.ceil(num_sig * math.sqrt(self.mean_load))
+        self.min_fitness = max(0, self.mean_load - self.num_fitness_classes // 2)
         self.Q = self.generate_q()
         self.B_inv = np.linalg.inv(np.flip(self.Q)[:-1, :-1])
+
+    def adjust_fitness_class(self, k):
+        k -= self.min_fitness
+        return int(max(0, min(self.num_fitness_classes - 1, k)))
 
     def generate_q(self, num_sig=2):
         """
@@ -268,12 +266,11 @@ class OGZeroClassSimulator(Simulator):
                         right_lineage = left_lineage.split(breakpoint)
                         # set values of left and right lineages
                         p = breakpoint / self.L
-                        left_lineage.value = self.set_post_rec_fitness_class(
-                            left_lineage.value, p
+                        lvalue, rvalue = self.set_post_rec_fitness_class(
+                            left_lineage.value + self.min_fitness, p
                         )
-                        right_lineage.value = self.set_post_rec_fitness_class(
-                            right_lineage.value, 1 - p
-                        )
+                        left_lineage.value = self.adjust_fitness_class(lvalue)
+                        right_lineage.value = self.adjust_fitness_class(rvalue)
                         d.append((t, left_lineage))
                         d.append((t, right_lineage))
                     else:  # loose all mutations

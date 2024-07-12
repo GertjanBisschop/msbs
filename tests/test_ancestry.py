@@ -190,8 +190,28 @@ class TestSimFitnessClass:
 
 
 class TestZeroClass:
+    def test_rec(self):
+        lin = ancestry.Lineage(
+            [
+                ancestry.AncestryInterval(100, 300, 0),
+                ancestry.AncestryInterval(400, 500, 0),
+            ],
+            1,
+            10,
+        )
+        L = 1000
+        r = 1e-5
+        n = 4
+        Ne = 10_000
+        U = 2e-3
+        s = 1e-3
+        sim = zeroclass.ZeroClassSimulator(L, r, n, Ne, U=U, s=s)
+        values = sim.set_post_rec_fitness_class(lin.value, 0.25)
+        for value in values:
+            assert isinstance(value, int)
+
     @pytest.mark.parametrize("seed", [962, 112254, 5478, 12032, 22080, 47908])
-    def test_simple(self, seed):
+    def test_OG(self, seed):
         L = 1000
         r = 1e-5
         n = 4
@@ -199,7 +219,7 @@ class TestZeroClass:
         U = 2e-3
         s = 1e-3
         sim = zeroclass.OGZeroClassSimulator(L, r, n, Ne, seed=seed, U=U, s=s)
-        ts = sim._intial_setup()
+        ts = sim._initial_setup()
         assert ts.num_edges > 1
         tsfull = sim._complete(ts)
         for tree in tsfull.trees():
