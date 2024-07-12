@@ -26,6 +26,7 @@ class Simulator(ancestry.SuperSimulator):
         if self.bounded:
             # use distribution here??
             self.bound = 1 / self.s
+            raise NotImplementedError
 
     def finalise(self, tables, nodes, simplify):
         for node in nodes:
@@ -96,6 +97,7 @@ class Simulator(ancestry.SuperSimulator):
         return self.ploidy * self.Ne * u
 
 
+@dataclasses.dataclass
 class ZeroClassSimulator(Simulator):
     click_rate: float = 0.0
 
@@ -137,14 +139,20 @@ class ZeroClassSimulator(Simulator):
             coal_rate = self.num_lineages * (self.num_lineages - 1) / 2
             if not ca_events:
                 coal_rate = 0.0
+            # should we be using a rescale factor here?
+            rescale = 1.0
+            # rescale = np.exp(-self.U / self.s + self.r * self.L / 2)
             t_ca = (
                 math.inf
                 if coal_rate == 0
-                else self.rng.exponential(1 / coal_rate) * self.ploidy * self.Ne
+                else self.rng.exponential(1 / coal_rate)
+                * self.ploidy
+                * self.Ne
+                * rescale
             )
             t_click = (
-                math.inf 
-                if self.click_rate == 0.0 
+                math.inf
+                if self.click_rate == 0.0
                 else self.rng.exponential(1 / (self.click_rate * self.U))
             )
             t_inc = min(t_mu, t_re, t_ca, t_click)
@@ -170,10 +178,10 @@ class ZeroClassSimulator(Simulator):
                 lvalue, rvalue = self.set_post_rec_fitness_class(left_lineage.value, p)
                 left_lineage.value = lvalue
                 right_lineage.value = rvalue
-                if left_lineage.value == self.min_fitness:
+                if left_lineage.value <= self.min_fitness:
                     _ = self.remove_lineage(idx)
                     self.record_edges(left_lineage, t, tables, nodes)
-                if right_lineage.value == self.min_fitness:
+                if right_lineage.value <= self.min_fitness:
                     self.record_edges(right_lineage, t, tables, nodes)
                 else:
                     self.insert_lineage(right_lineage)
@@ -187,11 +195,12 @@ class ZeroClassSimulator(Simulator):
                 if self.lineages[idx].value == self.min_fitness:
                     lin = self.remove_lineage(idx)
                     self.record_edges(lin, t, tables, nodes)
-            elif t_inc == t_click: # move ratchet
+            elif t_inc == t_click:  # move ratchet
                 self.min_fitness += 1
-                for idx, lin in enumerate(self.lineages):
-                    if lin.value <= self.min_fitness:
-                        _ = self.remove_lineage(idx)
+                for idx in range(self.num_lineages - 1, -1, -1):
+                    if self.lineages[idx].value <= self.min_fitness:
+                        lin = self.remove_lineage(idx)
+                        assert lin.value <= self.min_fitness
                         self.record_edges(lin, t, tables, nodes)
             else:  # common ancestor event
                 a = self.remove_lineage(self.rng.integers(self.num_lineages))
@@ -208,12 +217,13 @@ class ZeroClassSimulator(Simulator):
                         )
 
                 nodes.append(ancestry.Node(time=t))
-                if len(c.ancestry) > 0:
+                if len(c.ancestry) > 0 and k > self.min_fitness:
                     self.insert_lineage(c)
 
         return self.finalise(tables, nodes, simplify)
 
 
+@dataclasses.dataclass
 class OGZeroClassSimulator(Simulator):
     def __post_init__(self):
         super().__post_init__()

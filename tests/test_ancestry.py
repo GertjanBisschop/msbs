@@ -272,6 +272,20 @@ class TestZeroClass:
         for tree in tsfull.trees():
             assert tree.num_roots == 1
 
+    @pytest.mark.parametrize("seed", [962, 112254, 58958])
+    def test_click(self, seed):
+        L = 100_000
+        r = 1e-8
+        Ne = 10_000
+        U = 1e-3
+        s = 1e-3
+        n = 100
+        sim = zeroclass.ZeroClassSimulator(
+            L, r, n, Ne, seed=seed, U=U, s=s, click_rate=0.25
+        )
+        ts = sim._initial_setup(ca_events=True)
+        assert ts.num_trees > 1
+
 
 class TestNeTT:
     def test_simple(self):

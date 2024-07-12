@@ -255,11 +255,14 @@ class SFSStat(Stat):
             # continuous plot
             # only plot first q alleles
             q = self.dim // 5
+            d = np.log(a)
             x_axis = np.arange(1, q)
             fig = plt.figure()
             ax = fig.gca()
-            for i in range(len(labels)):
-                ax.plot(x_axis, a[i, : q - 1], label=labels[i])
+            for i in range(len(labels) - 1):
+                ax.plot(x_axis, d[i, : q - 1], label=labels[i], marker=".")
+
+            ax.plot(x_axis, d[-1, : q - 1], label=labels[-1], marker="o")
 
         ax.legend(loc="upper right")
         plt.title(self.label)
