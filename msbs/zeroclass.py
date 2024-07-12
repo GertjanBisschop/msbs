@@ -97,6 +97,8 @@ class Simulator(ancestry.SuperSimulator):
 
 
 class ZeroClassSimulator(Simulator):
+    click_rate: float = 0.0
+
     def _initial_setup(
         self, simplify=False, debug=False, ca_events=False, end_time=None
     ):
@@ -140,7 +142,12 @@ class ZeroClassSimulator(Simulator):
                 if coal_rate == 0
                 else self.rng.exponential(1 / coal_rate) * self.ploidy * self.Ne
             )
-            t_inc = min(t_mu, t_re, t_ca)
+            t_click = (
+                math.inf 
+                if self.click_rate == 0.0 
+                else self.rng.exponential(1 / (self.click_rate * self.U))
+            )
+            t_inc = min(t_mu, t_re, t_ca, t_click)
             if end_time < t_inc + t:
                 t = end_time
                 # take care of all floating lineages
@@ -180,20 +187,29 @@ class ZeroClassSimulator(Simulator):
                 if self.lineages[idx].value == self.min_fitness:
                     lin = self.remove_lineage(idx)
                     self.record_edges(lin, t, tables, nodes)
+            elif t_inc == t_click: # move ratchet
+                self.min_fitness += 1
+                for idx, lin in enumerate(self.lineages):
+                    if lin.value <= self.min_fitness:
+                        _ = self.remove_lineage(idx)
+                        self.record_edges(lin, t, tables, nodes)
             else:  # common ancestor event
                 a = self.remove_lineage(self.rng.integers(self.num_lineages))
                 b = self.remove_lineage(self.rng.integers(self.num_lineages))
                 k = math.ceil((a.value + b.value) / 2)
                 c = ancestry.Lineage(len(nodes), [], k)
                 for interval, intersecting_lineages in ancestry.merge_ancestry([a, b]):
-                    c.ancestry.append(interval)
+                    # only add interval back into state if not ancestral to all samples
+                    if interval.ancestral_to < self.n * self.ploidy:
+                        c.ancestry.append(interval)
                     for lineage in intersecting_lineages:
                         tables.edges.add_row(
                             interval.left, interval.right, c.node, lineage.node
                         )
 
                 nodes.append(ancestry.Node(time=t))
-                self.insert_lineage(c)
+                if len(c.ancestry) > 0:
+                    self.insert_lineage(c)
 
         return self.finalise(tables, nodes, simplify)
 
