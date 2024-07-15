@@ -76,13 +76,13 @@ class SimStat:
 
 
 @dataclasses.dataclass
-class NumMutsStat(SimStat):
+class NumCoalEventsStat(SimStat):
     dim: int = 1
-    label: str = "NumMuts_"
+    label: str = "NumCoalEvents_"
     tree_seq: bool = False
 
     def compute(self, sim: zeroclass.Simulator) -> float:
-        return
+        return sim.num_coal_events
 
 
 class SimRunner:
@@ -104,7 +104,6 @@ class SimRunner:
             ploidy=2,
             U=params["U"],
             s=params["s"],
-            bounded=True,
         )
 
         for seed in tqdm(seeds, desc="Running zeroclass model."):
@@ -189,6 +188,7 @@ def evaluate(scenario, n, reps):
     stats = [
         RootTimeStat(),
         NumRootsStat(),
+        NumCoalEventsStat(),
     ]
     SR.run_analysis(params, n, stats, output_dir)
 

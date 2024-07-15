@@ -11,6 +11,12 @@ from msbs import utils
 
 
 @dataclasses.dataclass
+class Ratchet:
+    click_rate: float = 0.0
+    start_value: int = 0
+
+
+@dataclasses.dataclass
 class Simulator(ancestry.SuperSimulator):
     U: float = 2e-3
     s: float = 1e-3
@@ -27,6 +33,7 @@ class Simulator(ancestry.SuperSimulator):
             # use distribution here??
             self.bound = 1 / self.s
             raise NotImplementedError
+        self.num_coal_events = 0
 
     def finalise(self, tables, nodes, simplify):
         for node in nodes:
@@ -99,7 +106,7 @@ class Simulator(ancestry.SuperSimulator):
 
 @dataclasses.dataclass
 class ZeroClassSimulator(Simulator):
-    click_rate: float = 0.0
+    ratchet: Ratchet = Ratchet()
 
     def _initial_setup(
         self, simplify=False, debug=False, ca_events=False, end_time=None
@@ -136,9 +143,9 @@ class ZeroClassSimulator(Simulator):
             assert total_num_muts >= len(num_muts)
             mu_rate = total_num_muts * self.s
             t_mu = math.inf if mu_rate == 0 else self.rng.exponential(1 / mu_rate)
-            coal_rate = self.num_lineages * (self.num_lineages - 1) / 2
-            if not ca_events:
-                coal_rate = 0.0
+            coal_rate = (
+                self.num_lineages * (self.num_lineages - 1) / 2 if ca_events else 0.0
+            )
             # should we be using a rescale factor here?
             rescale = 1.0
             # rescale = np.exp(-self.U / self.s + self.r * self.L / 2)
@@ -152,8 +159,8 @@ class ZeroClassSimulator(Simulator):
             )
             t_click = (
                 math.inf
-                if self.click_rate == 0.0
-                else self.rng.exponential(1 / (self.click_rate * self.U))
+                if self.ratchet.click_rate == 0.0
+                else self.rng.exponential(1 / (self.ratchet.click_rate * self.U))
             )
             t_inc = min(t_mu, t_re, t_ca, t_click)
             if end_time < t_inc + t:
@@ -203,6 +210,7 @@ class ZeroClassSimulator(Simulator):
                         assert lin.value <= self.min_fitness
                         self.record_edges(lin, t, tables, nodes)
             else:  # common ancestor event
+                self.num_coal_events += 1
                 a = self.remove_lineage(self.rng.integers(self.num_lineages))
                 b = self.remove_lineage(self.rng.integers(self.num_lineages))
                 k = math.ceil((a.value + b.value) / 2)
@@ -316,3 +324,48 @@ class OGZeroClassSimulator(Simulator):
                     nodes.append(ancestry.Node(time=t))
 
         return self.finalise(tables, nodes, simplify)
+
+
+@dataclasses.dataclass
+class ZeroClassEmulator(Simulator):
+    num_classes: int = 10
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.d = self._demography_factory()
+
+    def reset(self, seed):
+        self.seed = seed
+        self.rng = np.random.default_rng(self.seed)
+        self.lineages = []
+
+    def run(self, simplify=True):
+        return self._sim(simplify=simplify)
+
+    def _demography_factory(self):
+        d = msprime.Demography()
+        for pop_idx in range(10):
+            nhk = utils.poisson_pmf(pop_idx, self.mean_load)
+            d.add_population(initial_size=self.Ne * 2 * nhk)
+            if pop_idx > 0:
+                d.set_migration_rate(
+                    source=pop_idx, dest=pop_idx - 1, rate=self.s * pop_idx
+                )
+        return d
+
+    def _sim(self, simplify=True, **_):
+        p = np.array(
+            [utils.poisson_pmf(i, self.mean_load) for i in range(self.num_classes)]
+        )
+        p /= np.sum(p)
+        sample_distr = self.rng.multinomial(self.n * self.ploidy, p)
+        samples = {
+            i: sample_distr[i] for i in range(sample_distr.size) if sample_distr[i] > 0
+        }
+        return msprime.sim_ancestry(
+            samples,
+            demography=self.d,
+            sequence_length=self.L,
+            recombination_rate=self.r,
+            ploidy=1,
+        )

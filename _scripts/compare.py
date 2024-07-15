@@ -421,7 +421,7 @@ class SimRunner:
                 U=params["U"],
                 s=params["s"],
             )
-            for seed in tqdm(seeds, desc="Running fitnessclass model."):
+            for seed in tqdm(seeds, desc="Running fitnessclass model"):
                 sim.reset(seed)
                 yield sim.run()
         elif model == "zeroclass":
@@ -435,12 +435,27 @@ class SimRunner:
                 U=params["U"],
                 s=params["s"],
             )
-            for seed in tqdm(seeds, desc="Running zeroclass model."):
+            for seed in tqdm(seeds, desc="Running zeroclass model"):
                 sim.reset(seed)
                 yield sim.run(ca_events=True, end_time=None)
 
+        elif model == "zeroclassemulator":
+
+            sim = zeroclass.ZeroClassEmulator(
+                L=params["L"],
+                r=params["r"],
+                n=n,
+                Ne=params["Ne"],
+                ploidy=2,
+                U=params["U"],
+                s=params["s"],
+            )
+            for seed in tqdm(seeds, desc="Running zeroclass emulation model"):
+                sim.reset(seed)
+                yield sim.run()
+
         elif model == "hudson_rescaled":
-            for seed in tqdm(seeds, desc="Running hudson."):
+            for seed in tqdm(seeds, desc="Running hudson rescaled"):
                 yield msprime.sim_ancestry(
                     samples=n,
                     sequence_length=params["L"],
@@ -468,7 +483,7 @@ class SimRunner:
                 yield sim.run(demography, seed=seed)
 
         else:
-            for seed in tqdm(seeds, desc="Running hudson."):
+            for seed in tqdm(seeds, desc="Running hudson"):
                 yield msprime.sim_ancestry(
                     samples=n,
                     sequence_length=params["L"],
@@ -697,7 +712,7 @@ def compare(scenario, slim, n, reps):
         SFSStat(dim=n * 2 - 1),
     ]
     # models = ["fitnessclass", "zeroclass"]
-    models = ["zeroclass", "stepwise"]
+    models = ["zeroclass", "zeroclassemulator"]
     # models = []
     SR.run_analysis(params, n, stats, output_dir, models)
 

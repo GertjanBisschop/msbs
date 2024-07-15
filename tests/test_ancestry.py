@@ -281,9 +281,29 @@ class TestZeroClass:
         s = 1e-3
         n = 100
         sim = zeroclass.ZeroClassSimulator(
-            L, r, n, Ne, seed=seed, U=U, s=s, click_rate=0.25
+            L, r, n, Ne, seed=seed, U=U, s=s, ratchet=zeroclass.Ratchet(click_rate=0.25)
         )
         ts = sim._initial_setup(ca_events=True)
+        assert ts.num_trees > 1
+
+    @pytest.mark.parametrize("seed", [101])
+    def test_emulator(self, seed):
+        L = 100_000
+        r = 1e-8
+        Ne = 10_000
+        U = 1e-3
+        s = 1e-3
+        n = 100
+        sim = zeroclass.ZeroClassEmulator(
+            L,
+            r,
+            n,
+            Ne,
+            seed=seed,
+            U=U,
+            s=s,
+        )
+        ts = sim.run()
         assert ts.num_trees > 1
 
 
