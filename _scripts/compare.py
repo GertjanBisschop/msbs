@@ -50,7 +50,7 @@ class SummaryStat(Stat):
     def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
         if self.norm:
             data /= np.mean(data[-3])
-        plt.violinplot(data.tolist(), showmeans=True)
+        plt.violinplot([z[~np.isnan(z)] for z in data], showmeans=True)
         plt.xticks(
             [y + 1 for y in range(data.shape[0])],
             labels=models
@@ -95,12 +95,13 @@ class CovStat(Stat):
 
     def group(self, all_reps, num_models):
         # shape a: num_models, num_reps, num_points
+        data = np.ma.array(all_reps, mask=np.isnan(all_reps))
         num_reps = all_reps.shape[1]
         num_points = self.dim
         result = np.zeros((num_models, num_points), dtype=np.float64)
         for i in range(num_models):
             for j in range(num_points):
-                result[i, j] = np.sum(all_reps[i, :, j]) / num_reps
+                result[i, j] = np.array(np.sum(data[i, :, j]).data) / num_reps
 
         return result
 
@@ -156,7 +157,8 @@ class SFSStat(Stat):
         return afs * q
 
     def group(self, all_reps):
-        mean_over_reps = np.mean(all_reps, axis=1)
+        data = np.ma.array(all_reps, mask=np.isnan(all_reps))
+        mean_over_reps = np.mean(data, axis=1).data
         return mean_over_reps
 
     def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
@@ -317,12 +319,12 @@ class TajimasDStat(SummaryStat):
     dim: int = 1
     label: str = "TajimasD_"
 
-    def compute(self, ts: tskit.TreeSequence, q: float = 1.0) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         return ts.Tajimas_D(
             sample_sets=None,
             windows=None,
             mode="branch",
-        ) * q
+        )
 
 
 @dataclasses.dataclass
@@ -455,12 +457,16 @@ class SimRunner:
                 yield sim.run()
 
         elif model == "hudson_rescaled":
+            rescale = np.exp(-params["U"] / params["s"])
+            if rescale < 1:
+                R = params["r"] * params["L"]
+                rescale = np.exp(-params["U"] / (params["s"] + R / 2))
             for seed in tqdm(seeds, desc="Running hudson rescaled"):
                 yield msprime.sim_ancestry(
                     samples=n,
                     sequence_length=params["L"],
                     recombination_rate=params["r"],
-                    population_size=params["Ne"] * np.exp(-params["U"] / params["s"]),
+                    population_size=params["Ne"] * rescale,
                     random_seed=seed,
                 )
 
@@ -533,7 +539,10 @@ class SimRunner:
 
     def _process_slim_trees(self, n, L):
         ts_paths = os.listdir(self.slim_trees)
-        for i in range(self.num_reps):
+        num_reps = min(self.num_reps, len(ts_paths))
+        if num_reps < self.num_reps:
+            print("[X] Number of replicates requested is larger than the number of available SLiM trees.")
+        for i in range(num_reps):
             ts = tskit.load(self.slim_trees / ts_paths[i])
             if ts.sequence_length > L + 1:
                 mid = ts.sequence_length // 2
@@ -552,7 +561,7 @@ class SimRunner:
         models: List[str],
     ) -> None:
         results = [
-            np.zeros((len(models) + 3, self.num_reps, stat.dim)) for stat in stats
+            np.full((len(models) + 3, self.num_reps, stat.dim), dtype=np.float64, fill_value=np.nan) for stat in stats
         ]
 
         # run bs simulator
@@ -572,7 +581,7 @@ class SimRunner:
             for j, stat in enumerate(stats):
                 results[j][m + 2, i, ...] = stat.compute(ts)
 
-        # TODO: run bs sims (forwards in time)
+        # analyse forwards in time sims
         for i, ts in tqdm(
             enumerate(self._process_slim_trees(2 * n, params["L"])),
             total=self.num_reps,
@@ -688,12 +697,12 @@ def compare(scenario, slim, n, reps):
             "s": 2.5e-2,
             "q": 1, # scaling factor
         },
-        "dros": {  # U/s = 50, Ns*e**(-U/s) = 3.8e-19, Ns = 2e3
-            "L": 24_000_000,
+        "dros": {  # U/s = 0.4, Ns = 2.5e2
+            "L": 24_000,
             "r": 1e-8,
             "Ne": 1_000_000,
-            "U": 0.1,
-            "s": 2e-3,
+            "U": 0.1 / 1000,
+            "s": 2.5e-4,
             "q": 20, # scaling factor
         },
     }

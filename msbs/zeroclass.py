@@ -84,9 +84,11 @@ class Simulator(ancestry.SuperSimulator):
 
     def _complete(self, ts):
         # see Nicolaisen and Desai 2013
-        # R = (self.r * self.L)
-        # rescale = np.exp(-self.U / (self.s + R / 2))
         rescale = np.exp(-self.U / self.s)
+        # TO DO: look into this issue !!!
+        if self.Ne * rescale < 1.0:
+            R = (self.r * self.L)
+            rescale = np.exp(-self.U / (self.s + R / 2))
         return msprime.sim_ancestry(
             initial_state=ts,
             recombination_rate=self.r,
