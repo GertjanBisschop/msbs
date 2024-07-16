@@ -76,7 +76,7 @@ class CovStat(Stat):
     def __post_init__(self):
         self.max_length = 10 / (self.r * self.Ne)
 
-    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs) -> float:
         # requires many observations of t_i and t_j at given distances
         # t_i can stay same fixed value
         num_points = self.dim
@@ -96,12 +96,13 @@ class CovStat(Stat):
     def group(self, all_reps, num_models):
         # shape a: num_models, num_reps, num_points
         data = np.ma.array(all_reps, mask=np.isnan(all_reps))
-        num_reps = all_reps.shape[1]
         num_points = self.dim
         result = np.zeros((num_models, num_points), dtype=np.float64)
         for i in range(num_models):
             for j in range(num_points):
-                result[i, j] = np.array(np.sum(data[i, :, j]).data) / num_reps
+                result[i, j] = (
+                    np.array(np.sum(data[i, :, j]).data) / data[i, :, j].count()
+                )
 
         return result
 
@@ -175,7 +176,7 @@ class SFSStat(Stat):
         ]
         # group observations: shape: (num_models, num_reps, num_points)
         a = self.group(data)
-        a_rel = np.abs(a - a[-1])
+        a_rel = a - a[-1]
         if self.dim <= 10:
             x_axis = np.arange(1, a.shape[-1] + 1)
             p = len(x_axis)
@@ -306,12 +307,15 @@ class DiversityStat(SummaryStat):
     norm: bool = True
 
     def compute(self, ts: tskit.TreeSequence, q: float = 1.0) -> float:
-        return ts.diversity(
-            sample_sets=None,
-            windows=None,
-            mode="branch",
-            span_normalise=True,
-        ) * q
+        return (
+            ts.diversity(
+                sample_sets=None,
+                windows=None,
+                mode="branch",
+                span_normalise=True,
+            )
+            * q
+        )
 
 
 @dataclasses.dataclass
@@ -541,7 +545,9 @@ class SimRunner:
         ts_paths = os.listdir(self.slim_trees)
         num_reps = min(self.num_reps, len(ts_paths))
         if num_reps < self.num_reps:
-            print("[X] Number of replicates requested is larger than the number of available SLiM trees.")
+            print(
+                "[X] Number of replicates requested is larger than the number of available SLiM trees."
+            )
         for i in range(num_reps):
             ts = tskit.load(self.slim_trees / ts_paths[i])
             if ts.sequence_length > L + 1:
@@ -561,7 +567,12 @@ class SimRunner:
         models: List[str],
     ) -> None:
         results = [
-            np.full((len(models) + 3, self.num_reps, stat.dim), dtype=np.float64, fill_value=np.nan) for stat in stats
+            np.full(
+                (len(models) + 3, self.num_reps, stat.dim),
+                dtype=np.float64,
+                fill_value=np.nan,
+            )
+            for stat in stats
         ]
 
         # run bs simulator
@@ -670,7 +681,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 1e-3,
             "s": 1e-3,
-            "q": 1, # scaling factor
+            "q": 1,  # scaling factor
         },
         "human": {  # U/s = 18, Ns*e**(-U/s) = 3.8e-7, Ns = 25
             # "L": 130_000_000,
@@ -679,7 +690,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 0.045 / 130_000_000 * temp_L,
             "s": 2.5e-3,
-            "q": 1, # scaling factor
+            "q": 1,  # scaling factor
         },
         "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70, Ns = 2.5
             "L": 130_000_000,
@@ -687,7 +698,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-4,
-            "q": 1, # scaling factor
+            "q": 1,  # scaling factor
         },
         "human_strong": {  # U/s = 1.8, Ns*e**(-U/s) = 41, Ns = 250
             "L": 130_000_000,
@@ -695,7 +706,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-2,
-            "q": 1, # scaling factor
+            "q": 1,  # scaling factor
         },
         "dros": {  # U/s = 0.4, Ns = 2.5e2
             "L": 24_000,
@@ -703,12 +714,10 @@ def compare(scenario, slim, n, reps):
             "Ne": 1_000_000,
             "U": 0.1 / 1000,
             "s": 2.5e-4,
-            "q": 20, # scaling factor
+            "q": 20,  # scaling factor
         },
     }
     params = params_scenarios[scenario]
-    # ploidy = 2
-    # num_reps = 1000
     SR = SimRunner(num_reps=reps, slim_trees=slim_trees)
     output_dir = pathlib.Path(f"_output/compare/{scenario}")
     output_dir.mkdir(parents=True, exist_ok=True)
