@@ -31,7 +31,7 @@ class Stat:
     label: str
 
     @abc.abstractmethod
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         return
 
     @abc.abstractmethod
@@ -44,7 +44,7 @@ class SummaryStat(Stat):
     norm: bool = False
 
     @abc.abstractmethod
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         return
 
     def plot(self, data: np.ndarray, outfile: pathlib.Path, models: List[str]) -> None:
@@ -76,7 +76,7 @@ class CovStat(Stat):
     def __post_init__(self):
         self.max_length = 10 / (self.r * self.Ne)
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         # requires many observations of t_i and t_j at given distances
         # t_i can stay same fixed value
         num_points = self.dim
@@ -149,11 +149,11 @@ class SFSStat(Stat):
     dim: int
     label: str = "SFS_"
 
-    def compute(self, ts: tskit.TreeSequence) -> np.ndarray:
+    def compute(self, ts: tskit.TreeSequence, q: float = 1.0) -> np.ndarray:
         afs = ts.allele_frequency_spectrum(
             polarised=True, mode="branch", span_normalise=True
         )[1:-1]
-        return afs
+        return afs * q
 
     def group(self, all_reps):
         mean_over_reps = np.mean(all_reps, axis=1)
@@ -276,7 +276,7 @@ class ExtBranchStat(SummaryStat):
     label: str = "ext_branch_"
     norm: bool = True
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         sfs = ts.allele_frequency_spectrum(
             sample_sets=None,
             windows=None,
@@ -293,8 +293,8 @@ class OldestRootStat(SummaryStat):
     label: str = "oldest_root_"
     norm: bool = True
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
-        return ts.max_root_time
+    def compute(self, ts: tskit.TreeSequence, q: float = 1.0) -> float:
+        return ts.max_root_time * q
 
 
 @dataclasses.dataclass
@@ -303,13 +303,13 @@ class DiversityStat(SummaryStat):
     label: str = "diversity_"
     norm: bool = True
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, q: float = 1.0) -> float:
         return ts.diversity(
             sample_sets=None,
             windows=None,
             mode="branch",
             span_normalise=True,
-        )
+        ) * q
 
 
 @dataclasses.dataclass
@@ -317,12 +317,12 @@ class TajimasDStat(SummaryStat):
     dim: int = 1
     label: str = "TajimasD_"
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, q: float = 1.0) -> float:
         return ts.Tajimas_D(
             sample_sets=None,
             windows=None,
             mode="branch",
-        )
+        ) * q
 
 
 @dataclasses.dataclass
@@ -331,7 +331,7 @@ class NumNodesStat(SummaryStat):
     label: str = "NumNodes_"
     norm: bool = True
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         return ts.num_nodes
 
 
@@ -341,7 +341,7 @@ class NumTreesStat(SummaryStat):
     label: str = "NumTrees_"
     norm: bool = True
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         return ts.num_trees
 
 
@@ -352,8 +352,8 @@ class MidTreeTBL(SummaryStat):
     norm: bool = True
     mid: int = 0
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
-        return ts.at(self.mid).total_branch_length
+    def compute(self, ts: tskit.TreeSequence, q: float = 1.0) -> float:
+        return ts.at(self.mid).total_branch_length * q
 
 
 @dataclasses.dataclass
@@ -362,8 +362,8 @@ class FirstTreeTBL(SummaryStat):
     label: str = "FirstTreeTBL_"
     norm: bool = True
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
-        return ts.first().total_branch_length
+    def compute(self, ts: tskit.TreeSequence, q: float = 1.0) -> float:
+        return ts.first().total_branch_length * q
 
 
 @dataclasses.dataclass
@@ -372,7 +372,7 @@ class MidTreeB2(SummaryStat):
     label: str = "MidTreeB2_"
     mid: int = 0
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         return ts.at(self.mid).b2_index(base=2)
 
 
@@ -382,7 +382,7 @@ class MidTreeColless(SummaryStat):
     label: str = "MidTreeColless_"
     mid: int = 0
 
-    def compute(self, ts: tskit.TreeSequence) -> float:
+    def compute(self, ts: tskit.TreeSequence, **kwargs: float) -> float:
         return ts.at(self.mid).colless_index()
 
 
@@ -579,7 +579,7 @@ class SimRunner:
             desc="SLiM trees",
         ):
             for j, stat in enumerate(stats):
-                results[j][m + 3, i, ...] = stat.compute(ts)
+                results[j][m + 3, i, ...] = stat.compute(ts, q=params["q"])
 
         for j, stat in enumerate(stats):
             output_file = output_dir / (stat.label + f"n{n}.png")
@@ -661,6 +661,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 1e-3,
             "s": 1e-3,
+            "q": 1, # scaling factor
         },
         "human": {  # U/s = 18, Ns*e**(-U/s) = 3.8e-7, Ns = 25
             # "L": 130_000_000,
@@ -669,6 +670,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 0.045 / 130_000_000 * temp_L,
             "s": 2.5e-3,
+            "q": 1, # scaling factor
         },
         "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70, Ns = 2.5
             "L": 130_000_000,
@@ -676,6 +678,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-4,
+            "q": 1, # scaling factor
         },
         "human_strong": {  # U/s = 1.8, Ns*e**(-U/s) = 41, Ns = 250
             "L": 130_000_000,
@@ -683,6 +686,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-2,
+            "q": 1, # scaling factor
         },
         "dros": {  # U/s = 50, Ns*e**(-U/s) = 3.8e-19, Ns = 2e3
             "L": 24_000_000,
@@ -690,6 +694,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 1_000_000,
             "U": 0.1,
             "s": 2e-3,
+            "q": 20, # scaling factor
         },
     }
     params = params_scenarios[scenario]
