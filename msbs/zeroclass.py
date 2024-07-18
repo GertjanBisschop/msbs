@@ -65,14 +65,19 @@ class Simulator(ancestry.SuperSimulator):
         self.lineages.append(lineage)
         self.num_lineages += 1
 
-    def set_post_rec_fitness_class(self, value, p):
+    def get_mean_load(self, t):
+        return self.mean_load * np.exp(-self.s * t)
+
+    def set_post_rec_fitness_class(self, value, p, mean_load=None):
+        if mean_load is None:
+            mean_load = self.mean_load
         start_value = value
         left_value = self.rng.binomial(start_value, p)
         # assign the remaining mutations to the right lineage
         right_value = start_value - left_value
         assert right_value >= 0
-        left_value += self.rng.poisson(self.mean_load * (1 - p))
-        right_value += self.rng.poisson(self.mean_load * p)
+        left_value += self.rng.poisson(mean_load * (1 - p))
+        right_value += self.rng.poisson(mean_load * p)
         return left_value, right_value
 
     def run(self, simplify=True, ca_events=False, end_time=None):
@@ -148,16 +153,10 @@ class ZeroClassSimulator(Simulator):
             coal_rate = (
                 self.num_lineages * (self.num_lineages - 1) / 2 if ca_events else 0.0
             )
-            # should we be using a rescale factor here?
-            rescale = 1
-            # rescale = np.exp(-self.U / self.s + self.r * self.L / 2)
             t_ca = (
                 math.inf
                 if coal_rate == 0
-                else self.rng.exponential(1 / coal_rate)
-                * self.ploidy
-                * self.Ne
-                * rescale
+                else self.rng.exponential(1 / coal_rate) * self.ploidy * self.Ne
             )
             t_click = (
                 math.inf
@@ -378,37 +377,48 @@ class MultiPopSimulator(Simulator):
 
     U: float = 2e-3
     s: float = 1e-3
+    num_populations: int = 2
 
     def __post_init__(self):
-        self.num_pops = 2
         self.mean_load = self.U * (1 - self.s) / self.s
-        self.num_lineages = np.zeros(2, dtype=np.int64)
-        self.min_fitness = 0
         self.rng = np.random.default_rng(self.seed)
-        self.lineages = [[] for _ in range(self.num_pops)]
-        self.num_coal_events = 0
-        self.migration_cut_off = 1
-        # this wrong: fix this
-        # pop_id = 0 (coalescing pop), pop_id = 1 (non-coalescing pop)
-        self.pop_ne = [
-            utils.poisson_pmf(i, self.mean_load) * self.Ne for i in range(self.num_pops)
+        self.min_fitness = 0
+        self.P = [
+            ancestry.Population(
+                idx,
+                utils.poisson_pmf(idx + self.min_fitness + 1, self.mean_load) * self.Ne,
+            )
+            for idx in range(self.num_populations)
         ]
+        # no coalescence events in last population
+        self.P[-1].Ne = 0.0
+        self.num_coal_events = np.zeros(self.num_populations, dtype=np.uint32)
+        self.bound = math.inf
 
     def stop_condition(self):
-        return np.sum(self.num_lineages) == 0
+        return sum(pop.num_lineages for pop in self.P) == 0
 
     def reset(self, seed=None):
         self.seed = seed
         self.__post_init__()
 
     def remove_lineage(self, lineage_id, pop_id):
-        lin = self.lineages[pop_id].pop(lineage_id)
-        self.num_lineages[pop_id] -= 1
-        return lin
+        return self.P[pop_id].remove_lineage(lineage_id)
 
     def insert_lineage(self, lineage, pop_id):
-        self.lineages[pop_id].append(lineage)
-        self.num_lineages[pop_id] += 1
+        lineage.population = pop_id
+        self.P[pop_id].insert_lineage(lineage)
+
+    def assign_pop(self, lineage):
+        # TODO: FIX ME
+        k = 0
+        return k
+
+    def move_lineage(self, lineage, dest, t, tables, nodes):
+        if lineage.value <= self.min_fitness:
+            self.record_edges(lineage, t, tables, nodes)
+        else:
+            self.insert_lineage(lineage, dest)
 
     def _initial_setup(
         self,
@@ -433,7 +443,7 @@ class MultiPopSimulator(Simulator):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
             k = self.rng.poisson(self.mean_load)
             if k > self.min_fitness:
-                pop_id = int(k > self.migration_cut_off)
+                pop_id = k - self.min_fitness - 1
                 self.insert_lineage(
                     ancestry.Lineage(len(nodes), segment_chain, k), pop_id
                 )
@@ -444,13 +454,13 @@ class MultiPopSimulator(Simulator):
             t_ca = math.inf
             t_mu = math.inf
             lineage_links = [
-                [lineage.num_recombination_links for lineage in pop]
-                for pop in self.lineages
+                [lineage.num_recombination_links for lineage in pop.lineages]
+                for pop in self.P
             ]
-            num_muts = [[lineage.value for lineage in pop] for pop in self.lineages]
+            num_muts = [[lineage.value for lineage in pop.lineages] for pop in self.P]
 
-            for pop_id in range(self.num_pops):
-                total_links = lineage_links[pop_id]
+            for pop_id in range(self.num_populations):
+                total_links = sum(lineage_links[pop_id])
                 re_rate = total_links * self.r
                 t_re_int = (
                     math.inf if re_rate == 0 else self.rng.exponential(1 / re_rate)
@@ -467,24 +477,19 @@ class MultiPopSimulator(Simulator):
                 if t_mu == t_mu_int:
                     mu_pop = pop_id
                 coal_rate = (
-                    self.num_lineages[pop_id] * (self.num_lineages[pop_id] - 1) / 2
+                    self.P[pop_id].num_lineages * (self.P[pop_id].num_lineages - 1) / 2
                 )
                 t_ca_int = (
                     math.inf
                     if coal_rate == 0
                     else self.rng.exponential(1 / coal_rate)
                     * self.ploidy
-                    * self.pop_ne[pop_id]
+                    * self.P[pop_id].Ne
                 )
                 t_ca = min(t_ca, t_ca_int)
                 if t_ca == t_ca_int:
                     ca_pop = pop_id
-            t_click = (
-                math.inf
-                if self.ratchet.click_rate == 0.0
-                else self.rng.exponential(1 / (self.ratchet.click_rate * self.U))
-            )
-            t_inc = min(t_mu, t_re, t_ca, t_click)
+            t_inc = min(t_mu, t_re, t_ca)
             if end_time < t_inc + t:
                 t = end_time
                 # take care of all floating lineages
@@ -495,9 +500,9 @@ class MultiPopSimulator(Simulator):
             t += t_inc
             if t_inc == t_re:  # recombination event
                 idx = rng.choices(
-                    range(self.num_lineages[re_pop]), weights=lineage_links[re_pop]
+                    range(self.P[re_pop].num_lineages), weights=lineage_links[re_pop]
                 )[0]
-                left_lineage = self.lineages[re_pop][idx]
+                left_lineage = self.P[re_pop].lineages[idx]
                 breakpoint = self.rng.integers(
                     left_lineage.left + 1, left_lineage.right
                 )
@@ -509,52 +514,30 @@ class MultiPopSimulator(Simulator):
                 lvalue, rvalue = self.set_post_rec_fitness_class(left_lineage.value, p)
                 left_lineage.value = lvalue
                 right_lineage.value = rvalue
-                if left_lineage.value <= self.min_fitness:
-                    _ = self.remove_lineage(idx, re_pop)
-                    self.record_edges(left_lineage, t, tables, nodes)
-                else:
-                    if left_lineage.value <= self.migration_cut_off:
-                        if re_pop != 0:
-                            _ = self.remove_lineage(idx, re_pop)
-                            self.insert_lineage(left_lineage, 0)
-                if right_lineage.value <= self.min_fitness:
-                    self.record_edges(right_lineage, t, tables, nodes)
-                else:
-                    if right_lineage.value <= self.migration_cut_off:
-                        self.insert_lineage(right_lineage, 0)
-                    else:
-                        self.insert_lineage(right_lineage, 1)
+                k = self.assign_pop(left_lineage)
+                if k != left_lineage.value:
+                    left_lineage = self.remove_lineage(idx, re_pop)
+                    self.move_lineage(left_lineage, k, t, tables, nodes)
+                k = self.assign_pop(right_lineage)
+                self.move_lineage(right_lineage, k, t, tables, nodes)
 
             elif t_inc == t_mu:  # decrement mutations
                 # pick random idx
                 idx = rng.choices(
-                    range(self.num_lineages[mu_pop]), weights=num_muts[mu_pop]
+                    range(self.P[mu_pop].num_lineages), weights=num_muts[mu_pop]
                 )[0]
-                # decrement
-                self.lineages[mu_pop][idx].value -= 1
-                # after decrementing
-                if self.lineages[mu_pop][idx].value <= self.min_fitness:
+                lin = self.P[mu_pop].lineages[idx]
+                lin.value -= 1
+                k = self.assign_pop(lin)
+                if k != lin.value:
                     lin = self.remove_lineage(idx, mu_pop)
-                    self.record_edges(lin, t, tables, nodes)
-                else:
-                    if self.lineages[mu_pop][idx].value <= self.migration_cut_off:
-                        assert mu_pop == 1
-                        lin = self.remove_lineage(idx, 1)
-                        self.insert_lineage(lin, 0)
+                    self.move_lineage(lin, k, t, tables, nodes)
 
-            elif t_inc == t_click:  # move ratchet
-                self.min_fitness += 1
-                for idx in range(self.num_lineages - 1, -1, -1):
-                    if self.lineages[idx].value <= self.min_fitness:
-                        lin = self.remove_lineage(idx)
-                        assert lin.value <= self.min_fitness
-                        self.record_edges(lin, t, tables, nodes)
             else:  # common ancestor event
-                self.num_coal_events += 1
-                a = self.remove_lineage(self.rng.integers(self.num_lineages))
-                b = self.remove_lineage(self.rng.integers(self.num_lineages))
-                k = math.ceil((a.value + b.value) / 2)
-                c = ancestry.Lineage(len(nodes), [], k)
+                self.num_coal_events[ca_pop] += 1
+                a = self.remove_lineage(self.rng.integers(self.P[ca_pop].num_lineages), ca_pop)
+                b = self.remove_lineage(self.rng.integers(self.P[ca_pop].num_lineages), ca_pop)
+                c = ancestry.Lineage(len(nodes), [], a.value)
                 for interval, intersecting_lineages in ancestry.merge_ancestry([a, b]):
                     # only add interval back into state if not ancestral to all samples
                     if interval.ancestral_to < self.n * self.ploidy:
@@ -565,7 +548,7 @@ class MultiPopSimulator(Simulator):
                         )
 
                 nodes.append(ancestry.Node(time=t))
-                if len(c.ancestry) > 0 and k > self.min_fitness:
-                    self.insert_lineage(c)
+                if len(c.ancestry) > 0:
+                    self.insert_lineage(c, ca_pop)
 
         return self.finalise(tables, nodes, simplify)

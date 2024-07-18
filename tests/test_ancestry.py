@@ -307,6 +307,29 @@ class TestZeroClass:
         assert ts.num_trees > 1
 
 
+class TestMultiPop:
+    def test_simple(self):
+        L = 100_000
+        r = 1e-8
+        Ne = 10_000
+        U = 1e-3
+        s = 1e-3
+        n = 4
+        seed = 11
+        sim = zeroclass.MultiPopSimulator(
+            L,
+            r,
+            n,
+            Ne,
+            seed=seed,
+            U=U,
+            s=s,
+            num_populations=3,
+        )
+        ts = sim._initial_setup()
+        assert ts.num_trees > 1
+
+
 class TestNeTT:
     def test_simple(self):
         L = 1000

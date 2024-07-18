@@ -445,7 +445,7 @@ class SimRunner:
                 sim.reset(seed)
                 yield sim.run(ca_events=True, end_time=None)
 
-        elif model == "zeroclassemulator":
+        elif model == "structuredcoal":
 
             sim = zeroclass.ZeroClassEmulator(
                 L=params["L"],
@@ -456,7 +456,9 @@ class SimRunner:
                 U=params["U"],
                 s=params["s"],
             )
-            for seed in tqdm(seeds, desc="Running zeroclass emulation model"):
+            for seed in tqdm(
+                seeds, desc="Running zeroclass structured coalescent model"
+            ):
                 sim.reset(seed)
                 yield sim.run()
 
@@ -675,21 +677,32 @@ def compare(scenario, slim, n, reps):
     ## PARAMS
     temp_L = 1_000_000
     params_scenarios = {
-        "simple": {  # U/s = 1, Ns*e**(-U/s) = 3.67, Ns = 10
+        "simple": {  # U/hs = 2, Ns*e**(-U/s) = 3.67, Ns = 10
             "L": 100_000,
             "r": 1e-8,
             "Ne": 10_000,
             "U": 1e-3,
             "s": 1e-3,
+            "emp_load": 2.35,
             "q": 1,  # scaling factor
         },
-        "human": {  # U/s = 18, Ns*e**(-U/s) = 3.8e-7, Ns = 25
+        "highload": {  # U/s = 3.75, Ns*e**(-U/s) = 4.7, Ns = 200
+            "L": 100_000,
+            "r": 1e-8,
+            "Ne": 10_000,
+            "U": 7.5e-2,
+            "s": 2.0e-2,
+            "emp_load": 12.21,
+            "q": 1,  # scaling factor
+        },
+        "human": {  # U/hs = 36, Ns*e**(-U/s) = 3.8e-7, Ns = 25
             # "L": 130_000_000,
             "L": temp_L,
             "r": 1e-8,
             "Ne": 10_000,
             "U": 0.045 / 130_000_000 * temp_L,
             "s": 2.5e-3,
+            "emp_load": 37.10 / 130_000_000 * temp_L,
             "q": 1,  # scaling factor
         },
         "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70, Ns = 2.5
@@ -698,6 +711,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-4,
+            "emp_load": None,
             "q": 1,  # scaling factor
         },
         "human_strong": {  # U/s = 1.8, Ns*e**(-U/s) = 41, Ns = 250
@@ -706,6 +720,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 10_000,
             "U": 0.045,
             "s": 2.5e-2,
+            "emp_load": None,
             "q": 1,  # scaling factor
         },
         "dros": {  # U/s = 0.4, Ns = 2.5e2
@@ -714,6 +729,7 @@ def compare(scenario, slim, n, reps):
             "Ne": 1_000_000,
             "U": 0.1 / 1000,
             "s": 2.5e-4,
+            "emp_load": None,
             "q": 20,  # scaling factor
         },
     }
@@ -735,7 +751,7 @@ def compare(scenario, slim, n, reps):
         SFSStat(dim=n * 2 - 1),
     ]
     # models = ["fitnessclass", "zeroclass"]
-    models = ["zeroclass", "zeroclassemulator"]
+    models = ["zeroclass", "structuredcoal"]
     # models = []
     SR.run_analysis(params, n, stats, output_dir, models)
 

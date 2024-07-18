@@ -39,6 +39,7 @@ class Lineage:
     node: int
     ancestry: List[AncestryInterval]
     value: float = 1.0
+    population: int = 0
 
     def __str__(self):
         s = f"{self.node}: {self.value} ["
@@ -95,7 +96,7 @@ class Lineage:
                 left_ancestry.append(dataclasses.replace(interval, right=breakpoint))
                 right_ancestry.append(dataclasses.replace(interval, left=breakpoint))
         self.ancestry = left_ancestry
-        right_lin = Lineage(self.node, right_ancestry, self.value)
+        right_lin = Lineage(self.node, right_ancestry, self.value, self.population)
 
         return right_lin
 
@@ -131,6 +132,25 @@ class Lineage:
                     j += 1
 
         return (overlap, overlap_length)
+
+
+@dataclasses.dataclass
+class Population:
+    id: int
+    Ne: float
+
+    def __post_init__(self):
+        self.lineages = []
+        self.num_lineages = 0
+
+    def remove_lineage(self, lineage_id):
+        lin = self.lineages.pop(lineage_id)
+        self.num_lineages -= 1
+        return lin
+
+    def insert_lineage(self, lineage):
+        self.lineages.append(lineage)
+        self.num_lineages += 1
 
 
 # The details of the machinery in the next two functions aren't important.
