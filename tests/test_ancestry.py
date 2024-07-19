@@ -308,14 +308,15 @@ class TestZeroClass:
 
 
 class TestMultiPop:
-    def test_simple(self):
+    @pytest.mark.parametrize("seed", [962, 112254, 58958])
+    def test_simple(self, seed):
         L = 100_000
         r = 1e-8
         Ne = 10_000
         U = 1e-3
-        s = 1e-3
+        s = 0.5e-3
         n = 4
-        seed = 11
+        seed = seed
         sim = zeroclass.MultiPopSimulator(
             L,
             r,
@@ -326,8 +327,10 @@ class TestMultiPop:
             s=s,
             num_populations=3,
         )
-        ts = sim._initial_setup()
+        ts = sim._initial_setup(debug=True)
         assert ts.num_trees > 1
+        full_ts = sim._complete(ts)
+        assert full_ts.num_trees >= ts.num_trees
 
 
 class TestNeTT:

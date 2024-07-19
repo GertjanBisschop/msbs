@@ -388,12 +388,19 @@ class MultiPopSimulator(Simulator):
                 idx,
                 utils.poisson_pmf(idx + self.min_fitness + 1, self.mean_load) * self.Ne,
             )
-            for idx in range(self.num_populations)
+            for idx in range(self.num_populations - 1)
         ]
-        # no coalescence events in last population
-        self.P[-1].Ne = 0.0
+        self.P.append(ancestry.Population(self.num_populations - 1, 0.0))
         self.num_coal_events = np.zeros(self.num_populations, dtype=np.uint32)
         self.bound = math.inf
+
+    def print_state(self, last_event):
+        print(f"-------------{last_event}------------")
+        for pop in self.P:
+            print("num lins:", pop.num_lineages)
+            for lineage in pop.lineages:
+                print(lineage)
+        print("-----------------------------------")
 
     def stop_condition(self):
         return sum(pop.num_lineages for pop in self.P) == 0
@@ -409,10 +416,12 @@ class MultiPopSimulator(Simulator):
         lineage.population = pop_id
         self.P[pop_id].insert_lineage(lineage)
 
-    def assign_pop(self, lineage):
-        # TODO: FIX ME
-        k = 0
-        return k
+    def assign_pop(self, value):
+        # transforms lineage.value to the right population id
+        return min(value - 1 - self.min_fitness, self.num_populations - 1)
+
+    def assign_pop_lineage(self, lineage):
+        return self.assign_pop(lineage.value)
 
     def move_lineage(self, lineage, dest, t, tables, nodes):
         if lineage.value <= self.min_fitness:
@@ -434,6 +443,7 @@ class MultiPopSimulator(Simulator):
         tables.time_units = "generations"
         rng = random.Random(self.rng.integers(1))
         nodes = []
+        last_event = None
         if end_time is None:
             end_time = math.inf
         t = 0
@@ -443,7 +453,7 @@ class MultiPopSimulator(Simulator):
             segment_chain = [ancestry.AncestryInterval(0, self.L, 1)]
             k = self.rng.poisson(self.mean_load)
             if k > self.min_fitness:
-                pop_id = k - self.min_fitness - 1
+                pop_id = self.assign_pop(k)
                 self.insert_lineage(
                     ancestry.Lineage(len(nodes), segment_chain, k), pop_id
                 )
@@ -481,7 +491,7 @@ class MultiPopSimulator(Simulator):
                 )
                 t_ca_int = (
                     math.inf
-                    if coal_rate == 0
+                    if coal_rate == 0 or self.P[pop_id].Ne == 0
                     else self.rng.exponential(1 / coal_rate)
                     * self.ploidy
                     * self.P[pop_id].Ne
@@ -499,6 +509,7 @@ class MultiPopSimulator(Simulator):
 
             t += t_inc
             if t_inc == t_re:  # recombination event
+                last_event = "re_event_{re_pop}"
                 idx = rng.choices(
                     range(self.P[re_pop].num_lineages), weights=lineage_links[re_pop]
                 )[0]
@@ -514,29 +525,35 @@ class MultiPopSimulator(Simulator):
                 lvalue, rvalue = self.set_post_rec_fitness_class(left_lineage.value, p)
                 left_lineage.value = lvalue
                 right_lineage.value = rvalue
-                k = self.assign_pop(left_lineage)
-                if k != left_lineage.value:
+                k = self.assign_pop(left_lineage.value)
+                if k != left_lineage.population:
                     left_lineage = self.remove_lineage(idx, re_pop)
                     self.move_lineage(left_lineage, k, t, tables, nodes)
-                k = self.assign_pop(right_lineage)
+                k = self.assign_pop(right_lineage.value)
                 self.move_lineage(right_lineage, k, t, tables, nodes)
 
             elif t_inc == t_mu:  # decrement mutations
+                last_event = f"mu_event_{mu_pop}"
                 # pick random idx
                 idx = rng.choices(
                     range(self.P[mu_pop].num_lineages), weights=num_muts[mu_pop]
                 )[0]
                 lin = self.P[mu_pop].lineages[idx]
                 lin.value -= 1
-                k = self.assign_pop(lin)
-                if k != lin.value:
+                k = self.assign_pop(lin.value)
+                if k != lin.population:
                     lin = self.remove_lineage(idx, mu_pop)
                     self.move_lineage(lin, k, t, tables, nodes)
 
             else:  # common ancestor event
+                last_event = f"ca_event_{ca_pop}"
                 self.num_coal_events[ca_pop] += 1
-                a = self.remove_lineage(self.rng.integers(self.P[ca_pop].num_lineages), ca_pop)
-                b = self.remove_lineage(self.rng.integers(self.P[ca_pop].num_lineages), ca_pop)
+                a = self.remove_lineage(
+                    self.rng.integers(self.P[ca_pop].num_lineages), ca_pop
+                )
+                b = self.remove_lineage(
+                    self.rng.integers(self.P[ca_pop].num_lineages), ca_pop
+                )
                 c = ancestry.Lineage(len(nodes), [], a.value)
                 for interval, intersecting_lineages in ancestry.merge_ancestry([a, b]):
                     # only add interval back into state if not ancestral to all samples
@@ -550,5 +567,8 @@ class MultiPopSimulator(Simulator):
                 nodes.append(ancestry.Node(time=t))
                 if len(c.ancestry) > 0:
                     self.insert_lineage(c, ca_pop)
+
+            if debug:
+                self.print_state(last_event=last_event)
 
         return self.finalise(tables, nodes, simplify)

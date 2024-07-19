@@ -42,7 +42,7 @@ class Lineage:
     population: int = 0
 
     def __str__(self):
-        s = f"{self.node}: {self.value} ["
+        s = f"{self.node}: {self.value}, {self.population} ["
         for interval in self.ancestry:
             s += str(
                 (interval.left, interval.right, interval.ancestral_to, interval.value)
