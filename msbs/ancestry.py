@@ -139,6 +139,9 @@ class Population:
     id: int
     Ne: float
 
+    def __str__(self):
+        return f"id: {self.id}, num: {self.num_lineages}, Ne: {self.Ne}"
+
     def __post_init__(self):
         self.lineages = []
         self.num_lineages = 0

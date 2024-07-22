@@ -328,11 +328,15 @@ class OGZeroClassSimulator(Simulator):
 
 
 @dataclasses.dataclass
-class ZeroClassEmulator(Simulator):
+class StructCoalSimulator(Simulator):
     num_classes: int = 10
 
     def __post_init__(self):
         super().__post_init__()
+        self.p = np.array(
+            [utils.poisson_pmf(i, self.mean_load) for i in range(self.num_classes)]
+        )
+        self.p[-1] = 1 - np.sum(self.p[:-1])
         self.d = self._demography_factory()
 
     def reset(self, seed):
@@ -345,9 +349,9 @@ class ZeroClassEmulator(Simulator):
 
     def _demography_factory(self):
         d = msprime.Demography()
-        for pop_idx in range(10):
-            nhk = utils.poisson_pmf(pop_idx, self.mean_load)
-            d.add_population(initial_size=self.Ne * 2 * nhk)
+        for pop_idx in range(self.num_classes):
+            nhk = self.p[pop_idx]
+            d.add_population(initial_size=self.Ne * self.ploidy * nhk)
             if pop_idx > 0:
                 d.set_migration_rate(
                     source=pop_idx, dest=pop_idx - 1, rate=self.s * pop_idx
@@ -355,13 +359,11 @@ class ZeroClassEmulator(Simulator):
         return d
 
     def _sim(self, simplify=True, **_):
-        p = np.array(
-            [utils.poisson_pmf(i, self.mean_load) for i in range(self.num_classes)]
-        )
-        p /= np.sum(p)
-        sample_distr = self.rng.multinomial(self.n * self.ploidy, p)
+        sample_distr = self.rng.multinomial(self.n * self.ploidy, self.p)
         samples = {
-            i: sample_distr[i] for i in range(sample_distr.size) if sample_distr[i] > 0
+            f"pop_{i}": sample_distr[i]
+            for i in range(sample_distr.size)
+            if sample_distr[i] > 0
         }
         return msprime.sim_ancestry(
             samples,
@@ -373,7 +375,7 @@ class ZeroClassEmulator(Simulator):
 
 
 @dataclasses.dataclass
-class MultiPopSimulator(Simulator):
+class MultiClassSimulator(Simulator):
 
     U: float = 2e-3
     s: float = 1e-3
@@ -390,7 +392,7 @@ class MultiPopSimulator(Simulator):
             )
             for idx in range(self.num_populations - 1)
         ]
-        self.P.append(ancestry.Population(self.num_populations - 1, 0.0))
+        self.P.append(ancestry.Population(len(self.P), 0.0))
         self.num_coal_events = np.zeros(self.num_populations, dtype=np.uint32)
         self.bound = math.inf
 
@@ -429,6 +431,20 @@ class MultiPopSimulator(Simulator):
         else:
             self.insert_lineage(lineage, dest)
 
+    def _complete(self, ts):
+        # see Nicolaisen and Desai 2013
+        # rescale = np.exp(-self.U / self.s)
+        ## TO DO: look into this issue !!!
+        # if self.Ne * rescale < 1.0:
+        R = self.r * self.L
+        rescale = np.exp(-self.U / (self.s + R / 2))
+        return msprime.sim_ancestry(
+            initial_state=ts,
+            recombination_rate=self.r,
+            population_size=self.Ne * rescale,
+            ploidy=self.ploidy,
+        )
+
     def _initial_setup(
         self,
         simplify=False,
@@ -458,6 +474,9 @@ class MultiPopSimulator(Simulator):
                     ancestry.Lineage(len(nodes), segment_chain, k), pop_id
                 )
             nodes.append(ancestry.Node(time=0, flags=tskit.NODE_IS_SAMPLE))
+        if debug:
+            for pop in self.P:
+                print(pop)
 
         while not self.stop_condition():
             t_re = math.inf
@@ -467,8 +486,11 @@ class MultiPopSimulator(Simulator):
                 [lineage.num_recombination_links for lineage in pop.lineages]
                 for pop in self.P
             ]
-            num_muts = [[lineage.value for lineage in pop.lineages] for pop in self.P]
-
+            num_muts_last = [lineage.value for lineage in self.P[-1].lineages]
+            total_num_muts = [
+                (pop.id + self.min_fitness + 1) * pop.num_lineages for pop in self.P
+            ]
+            total_num_muts[-1] = sum(num_muts_last)
             for pop_id in range(self.num_populations):
                 total_links = sum(lineage_links[pop_id])
                 re_rate = total_links * self.r
@@ -478,8 +500,7 @@ class MultiPopSimulator(Simulator):
                 t_re = min(t_re, t_re_int)
                 if t_re == t_re_int:
                     re_pop = pop_id
-                total_num_muts = sum(num_muts[pop_id])
-                mu_rate = total_num_muts * self.s
+                mu_rate = total_num_muts[pop_id] * self.s
                 t_mu_int = (
                     math.inf if mu_rate == 0 else self.rng.exponential(1 / mu_rate)
                 )
@@ -509,7 +530,7 @@ class MultiPopSimulator(Simulator):
 
             t += t_inc
             if t_inc == t_re:  # recombination event
-                last_event = "re_event_{re_pop}"
+                last_event = f"re_event_{re_pop}"
                 idx = rng.choices(
                     range(self.P[re_pop].num_lineages), weights=lineage_links[re_pop]
                 )[0]
@@ -535,9 +556,12 @@ class MultiPopSimulator(Simulator):
             elif t_inc == t_mu:  # decrement mutations
                 last_event = f"mu_event_{mu_pop}"
                 # pick random idx
-                idx = rng.choices(
-                    range(self.P[mu_pop].num_lineages), weights=num_muts[mu_pop]
-                )[0]
+                if mu_pop == self.num_populations - 1:
+                    idx = rng.choices(
+                        range(self.P[mu_pop].num_lineages), weights=num_muts_last
+                    )[0]
+                else:
+                    idx = self.rng.integers(self.P[mu_pop].num_lineages)
                 lin = self.P[mu_pop].lineages[idx]
                 lin.value -= 1
                 k = self.assign_pop(lin.value)

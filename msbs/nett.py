@@ -121,9 +121,7 @@ class Simulator(ancestry.SuperSimulator):
         return self.finalise(tables, nodes, simplify)
 
 
-dataclasses.dataclass
-
-
+@dataclasses.dataclass
 class StepWiseSimulator(ancestry.SuperSimulator):
     U: float = 2e-3
     s: float = 1e-3

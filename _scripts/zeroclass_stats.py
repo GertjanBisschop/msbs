@@ -82,7 +82,7 @@ class NumCoalEventsStat(SimStat):
     tree_seq: bool = False
 
     def compute(self, sim: zeroclass.Simulator) -> float:
-        return sim.num_coal_events
+        return np.sum(sim.num_coal_events)
 
 
 class SimRunner:
@@ -96,7 +96,7 @@ class SimRunner:
 
     def _run_simulator(self, params, n):
         seeds = self.get_seeds()
-        sim = zeroclass.ZeroClassSimulator(
+        sim = zeroclass.MultiClassSimulator(
             L=params["L"],
             r=params["r"],
             n=n,
@@ -104,6 +104,7 @@ class SimRunner:
             ploidy=2,
             U=params["U"],
             s=params["s"],
+            num_populations=5,
         )
 
         for seed in tqdm(seeds, desc="Running zeroclass model."):
@@ -142,7 +143,7 @@ def evaluate(scenario, n, reps):
         raise SystemExit(1)
 
     ## PARAMS
-    temp_L = 1_000_000
+    resize_factor = 12
     params_scenarios = {
         "simple": {  # U/s = 1, Ns*e**(-U/s) = 3.67
             "L": 100_000,
@@ -152,12 +153,11 @@ def evaluate(scenario, n, reps):
             "s": 1e-3,
         },
         "human": {  # U/s = 18, Ns*e**(-U/s) = 3.8e-7
-            # "L": 130_000_000,
-            "L": temp_L,
+            "L": 130_000_000 / resize_factor,
             "r": 1e-8,
             "Ne": 10_000,
-            "U": 0.045 / 130_000_000 * temp_L,
-            "s": 2.5e-3,
+            "U": 0.045 / resize_factor,
+            "s": 1.25e-3,
         },
         "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70
             "L": 130_000_000,

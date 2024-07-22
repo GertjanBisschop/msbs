@@ -314,10 +314,10 @@ class TestMultiPop:
         r = 1e-8
         Ne = 10_000
         U = 1e-3
-        s = 0.5e-3
+        s = 1e-3
         n = 4
         seed = seed
-        sim = zeroclass.MultiPopSimulator(
+        sim = zeroclass.MultiClassSimulator(
             L,
             r,
             n,
@@ -327,10 +327,13 @@ class TestMultiPop:
             s=s,
             num_populations=3,
         )
-        ts = sim._initial_setup(debug=True)
+        ts = sim._initial_setup()
         assert ts.num_trees > 1
         full_ts = sim._complete(ts)
         assert full_ts.num_trees >= ts.num_trees
+        sim.reset()
+        ts = sim.run()
+        assert ts.num_trees > 1
 
 
 class TestNeTT:

@@ -202,6 +202,29 @@ class SFSStat(Stat):
             ax.xaxis.set_tick_params(which="major", labelsize=p2)
 
         else:
+            # log plot
+            # only plot first q alleles
+            q = self.dim // 5
+            x_axis = np.arange(1, q)
+            fig = plt.figure()
+            ax = fig.gca()
+            for i in range(len(labels) - 1):
+                ax.plot(
+                    x_axis,
+                    np.log(np.abs(a_rel[i, : q - 1])),
+                    label=labels[i],
+                    marker=".",
+                )
+
+            ax.legend(loc="upper right")
+            plt.title(self.label)
+            parts = list(outfile.parts)
+            temp = parts[-1].split("_")
+            temp[0] = "SFSRel_log"
+            parts[-1] = "_".join(temp)
+            fig.savefig(pathlib.Path(*parts))
+            plt.close("all")
+
             # continuous plot
             # only plot first q alleles
             q = self.dim // 5
@@ -213,6 +236,8 @@ class SFSStat(Stat):
 
         ax.legend(loc="upper right")
         plt.title(self.label)
+        ax.set_ylabel("branch length diff relative to slim")
+        ax.set_xlabel("iton")
         parts = list(outfile.parts)
         temp = parts[-1].split("_")
         temp[0] = "SFSRel"
@@ -252,6 +277,8 @@ class SFSStat(Stat):
                     width=half_width,
                     align="center",
                 )
+            ax.set_ylabel("branch length")
+            ax.set_xlabel("iton")
             ax.xaxis.set_tick_params(which="major", labelsize=p2)
 
         else:
@@ -266,6 +293,8 @@ class SFSStat(Stat):
                 ax.plot(x_axis, d[i, : q - 1], label=labels[i], marker=".")
 
             ax.plot(x_axis, d[-1, : q - 1], label=labels[-1], marker="o")
+            ax.set_ylabel("branch length (log)")
+            ax.set_xlabel("iton")
 
         ax.legend(loc="upper right")
         plt.title(self.label)
@@ -445,9 +474,9 @@ class SimRunner:
                 sim.reset(seed)
                 yield sim.run(ca_events=True, end_time=None)
 
-        elif model == "structuredcoal":
-
-            sim = zeroclass.ZeroClassEmulator(
+        elif model == "multiclass":
+            num_populations = 5
+            sim = zeroclass.MultiClassSimulator(
                 L=params["L"],
                 r=params["r"],
                 n=n,
@@ -455,19 +484,34 @@ class SimRunner:
                 ploidy=2,
                 U=params["U"],
                 s=params["s"],
+                num_populations=num_populations,
             )
             for seed in tqdm(
-                seeds, desc="Running zeroclass structured coalescent model"
+                seeds, desc=f"Running multiclass model: {num_populations} pops"
             ):
+                sim.reset(seed)
+                yield sim.run(ca_events=True, end_time=None)
+
+        elif model == "structuredcoal":
+            num_classes = 20
+            sim = zeroclass.StructCoalSimulator(
+                L=params["L"],
+                r=params["r"],
+                n=n,
+                Ne=params["Ne"],
+                ploidy=2,
+                U=params["U"],
+                s=params["s"],
+                num_classes=num_classes,
+            )
+            for seed in tqdm(seeds, desc="Running structured coalescent model"):
                 sim.reset(seed)
                 yield sim.run()
 
         elif model == "hudson_rescaled":
-            rescale = np.exp(-params["U"] / params["s"])
-            if rescale < 1:
-                R = params["r"] * params["L"]
-                rescale = np.exp(-params["U"] / (params["s"] + R / 2))
-            for seed in tqdm(seeds, desc="Running hudson rescaled"):
+            R = params["r"] * params["L"]
+            rescale = np.exp(-params["U"] / (params["s"] + R / 2))
+            for seed in tqdm(seeds, desc=f"Running hudson rescaled: {rescale}"):
                 yield msprime.sim_ancestry(
                     samples=n,
                     sequence_length=params["L"],
@@ -480,9 +524,8 @@ class SimRunner:
             demography = utils.stepwise_factory(
                 params["Ne"],
                 np.arange(1, 11) * 1000,
-                np.array(
-                    [10_000, 9_325, 8820, 8173, 7630, 6840, 6807, 5795, 5790, 5375]
-                ),
+                # human parameters rescale
+                np.array([9467, 9370, 9351, 9346, 9345, 9345, 9345, 9345, 9345, 9345]),
             )
             sim = nett.StepWiseSimulator(
                 L=params["L"],
@@ -568,6 +611,7 @@ class SimRunner:
         output_dir: pathlib.Path,
         models: List[str],
     ) -> None:
+        print(f"Running simulations with following parameters:{params}")
         results = [
             np.full(
                 (len(models) + 3, self.num_reps, stat.dim),
@@ -675,9 +719,10 @@ def compare(scenario, slim, n, reps):
         raise SystemExit(1)
 
     ## PARAMS
-    temp_L = 1_000_000
+    resize_factor = 12
     params_scenarios = {
-        "simple": {  # U/hs = 2, Ns*e**(-U/s) = 3.67, Ns = 10
+        ## ADAPT STRENGTH OF SELECTION HERE: HAPLOID VS DIPLOID!!
+        "simple": {  # U/hs = 2, Ns*e**(-U/s) = 3.67, Ns = 10, U/R = 1
             "L": 100_000,
             "r": 1e-8,
             "Ne": 10_000,
@@ -695,32 +740,34 @@ def compare(scenario, slim, n, reps):
             "emp_load": 12.21,
             "q": 1,  # scaling factor
         },
-        "human": {  # U/hs = 36, Ns*e**(-U/s) = 3.8e-7, Ns = 25
-            # "L": 130_000_000,
-            "L": temp_L,
+        "human": {  # U/hs = 36, Ns*e**(-U/s) = 3.8e-7, Ns = 25, U/R=0.0346
+            "L": 130_000_000 // resize_factor,
             "r": 1e-8,
             "Ne": 10_000,
-            "U": 0.045 / 130_000_000 * temp_L,
-            "s": 2.5e-3,
-            "emp_load": 37.10 / 130_000_000 * temp_L,
+            "U": 0.045 / resize_factor,
+            # "s": 2.5e-3,
+            "s": 1.25e-3,
+            "emp_load": 37.10 / resize_factor,
             "q": 1,  # scaling factor
         },
-        "human_weak": {  # U/s = 180, Ns*e**(-U/s) = 1.6e-70, Ns = 2.5
-            "L": 130_000_000,
+        "human_weak": {  # U/s = 370, Ns*e**(-U/s) = 1.6e-70, Ns = 2.5
+            "L": 130_000_000 // resize_factor,
             "r": 1e-8,
             "Ne": 10_000,
-            "U": 0.045,
-            "s": 2.5e-4,
+            "U": 0.045 / resize_factor,
+            # "s": 2.5e-4,
+            "s": 1.25e-4,
             "emp_load": None,
             "q": 1,  # scaling factor
         },
-        "human_strong": {  # U/s = 1.8, Ns*e**(-U/s) = 41, Ns = 250
-            "L": 130_000_000,
+        "human_strong": {  # U/s = 3.7, Ns*e**(-U/s) = 41, Ns = 250
+            "L": 130_000_000 // resize_factor,
             "r": 1e-8,
             "Ne": 10_000,
-            "U": 0.045,
-            "s": 2.5e-2,
-            "emp_load": None,
+            "U": 0.045 / resize_factor,
+            # "s": 2.5e-2,
+            "s": 1.25e-2,
+            "emp_load": 3.7,
             "q": 1,  # scaling factor
         },
         "dros": {  # U/s = 0.4, Ns = 2.5e2
@@ -751,8 +798,7 @@ def compare(scenario, slim, n, reps):
         SFSStat(dim=n * 2 - 1),
     ]
     # models = ["fitnessclass", "zeroclass"]
-    models = ["zeroclass", "structuredcoal"]
-    # models = []
+    models = ["multiclass"]
     SR.run_analysis(params, n, stats, output_dir, models)
 
 
