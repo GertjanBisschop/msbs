@@ -104,7 +104,7 @@ class Simulator(ancestry.SuperSimulator):
     def record_edges(self, lin, t, tables, nodes):
         for interval in lin.ancestry:
             tables.edges.add_row(interval.left, interval.right, len(nodes), lin.node)
-        nodes.append(ancestry.Node(time=t))
+        nodes.append(ancestry.Node(time=t, metadata={"load": f"{lin.value:b}"}))
 
     def common_ancestor_waiting_time_from_rate(self, rate):
         u = self.rng.expovariate(rate)
@@ -396,6 +396,9 @@ class MultiClassSimulator(Simulator):
         self.num_coal_events = np.zeros(self.num_populations, dtype=np.uint32)
         self.bound = math.inf
 
+    def ancestral_fitness_distr(self, t):
+        return self.mean_load * np.exp(-self.s * t)
+
     def print_state(self, last_event):
         print(f"-------------{last_event}------------")
         for pop in self.P:
@@ -431,7 +434,7 @@ class MultiClassSimulator(Simulator):
         else:
             self.insert_lineage(lineage, dest)
 
-    def _complete(self, ts):
+    def _complete(self, ts, end_time=None):
         # see Nicolaisen and Desai 2013
         # rescale = np.exp(-self.U / self.s)
         ## TO DO: look into this issue !!!
@@ -443,6 +446,7 @@ class MultiClassSimulator(Simulator):
             recombination_rate=self.r,
             population_size=self.Ne * rescale,
             ploidy=self.ploidy,
+            end_time=end_time,
         )
 
     def _initial_setup(
@@ -473,7 +477,11 @@ class MultiClassSimulator(Simulator):
                 self.insert_lineage(
                     ancestry.Lineage(len(nodes), segment_chain, k), pop_id
                 )
-            nodes.append(ancestry.Node(time=0, flags=tskit.NODE_IS_SAMPLE))
+            nodes.append(
+                ancestry.Node(
+                    time=0, flags=tskit.NODE_IS_SAMPLE, metadata={"load": f"{k:b}"}
+                )
+            )
         if debug:
             for pop in self.P:
                 print(pop)
@@ -543,7 +551,10 @@ class MultiClassSimulator(Simulator):
                 assert right_lineage.value == left_lineage.value
                 # set values of left and right lineages
                 p = breakpoint / self.L
-                lvalue, rvalue = self.set_post_rec_fitness_class(left_lineage.value, p)
+                mean_load = self.ancestral_fitness_distr(t)
+                lvalue, rvalue = self.set_post_rec_fitness_class(
+                    left_lineage.value, p, mean_load
+                )
                 left_lineage.value = lvalue
                 right_lineage.value = rvalue
                 k = self.assign_pop(left_lineage.value)
@@ -588,7 +599,7 @@ class MultiClassSimulator(Simulator):
                             interval.left, interval.right, c.node, lineage.node
                         )
 
-                nodes.append(ancestry.Node(time=t))
+                nodes.append(ancestry.Node(time=t, metadata={"load": f"{c.value:b}"}))
                 if len(c.ancestry) > 0:
                     self.insert_lineage(c, ca_pop)
 

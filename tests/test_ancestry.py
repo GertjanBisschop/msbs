@@ -331,6 +331,7 @@ class TestMultiPop:
         assert ts.num_trees > 1
         full_ts = sim._complete(ts)
         assert full_ts.num_trees >= ts.num_trees
+        full_ts.dump(f"multiclass_{seed}.trees")
         sim.reset()
         ts = sim.run()
         assert ts.num_trees > 1
