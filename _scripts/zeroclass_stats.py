@@ -45,6 +45,17 @@ class OneDimStat:
 
 
 @dataclasses.dataclass
+class OldestMutStat(OneDimStat):
+    label: str = "OldestMut_"
+
+    def compute(self, ts: tskit.TreeSequence) -> float:
+        if ts.num_mutations == 0:
+            return ts.max_root_time
+        else:
+            return np.max(ts.tables.mutations.time)
+
+
+@dataclasses.dataclass
 class NumRootsStat(OneDimStat):
     label: str = "NumRoots_"
 
@@ -195,7 +206,8 @@ class SimRunner:
 
         for seed in tqdm(seeds, desc="Running zeroclass model."):
             sim.reset(seed)
-            ts = sim._initial_setup(ca_events=True)
+            end_time = None
+            ts = sim._initial_setup(ca_events=True, end_time=end_time)
             end_time = ts.max_root_time
             if add_neutral:
                 tsplus = sim._complete(ts, end_time=end_time)
@@ -273,16 +285,16 @@ class SimRunner:
 @click.option("--scenario", default="simple")
 @click.option("--n", default=5)
 @click.option("--reps", default=100)
-@click.option("--resize", default=1)
+@click.option("--scale", default=1)
 @click.option("--neutral/--no-neutral", default=False)
-def evaluate(scenario, n, reps, resize, neutral):
+def evaluate(scenario, n, reps, scale, neutral):
     possible_scenarios = {"human", "dros", "human_weak", "human_strong", "simple"}
     if not scenario in possible_scenarios:
         click.echo("Scenario not implemented.")
         raise SystemExit(1)
 
     ## PARAMS
-    resize_factor = resize
+    resize_factor = scale
     params_scenarios = {
         "simple": {  # U/s = 1, Ns*e**(-U/s) = 3.67
             "L": 100_000 // resize_factor,
@@ -331,8 +343,9 @@ def evaluate(scenario, n, reps, resize, neutral):
         NumCoalEventsStat(),
         NumNodesStat(),
         SFSStat(dim=n * 2 - 1),
+        OldestMutStat(),
     ]
-    SR.run_analysis(params, n, stats, output_dir, resize, neutral)
+    SR.run_analysis(params, n, stats, output_dir, resize_factor, neutral)
 
 
 if __name__ == "__main__":

@@ -476,6 +476,7 @@ class SimRunner:
 
         elif model == "multiclass":
             num_populations = 5
+            end_time = None
             sim = zeroclass.MultiClassSimulator(
                 L=params["L"],
                 r=params["r"],
@@ -490,7 +491,7 @@ class SimRunner:
                 seeds, desc=f"Running multiclass model: {num_populations} pops"
             ):
                 sim.reset(seed)
-                yield sim.run(ca_events=True, end_time=None)
+                yield sim.run(ca_events=True, end_time=end_time)
 
         elif model == "structuredcoal":
             num_classes = 20
@@ -740,7 +741,16 @@ def compare(scenario, slim, n, reps):
             "emp_load": 12.21,
             "q": 1,  # scaling factor
         },
-        "human": {  # U/hs = 36, Ns*e**(-U/s) = 3.8e-7, Ns = 25, U/R=0.0346
+        "human_true": {  # U/hs = 18, Ns*e**(-U/s) = 3e-7, Ns = 25, U/R=0.0346
+            "L": 130_000_000 // resize_factor,
+            "r": 1e-8,
+            "Ne": 10_000,
+            "U": 0.045 / resize_factor,
+            "s": 2.5e-3,
+            "emp_load": 18 / resize_factor,
+            "q": 1,  # scaling factor
+        },
+        "human": {  # U/hs = 36, Ns*e**(-U/s) = 3e-15, Ns = 12.5, U/R=0.0346
             "L": 130_000_000 // resize_factor,
             "r": 1e-8,
             "Ne": 10_000,
@@ -750,7 +760,7 @@ def compare(scenario, slim, n, reps):
             "emp_load": 37.10 / resize_factor,
             "q": 1,  # scaling factor
         },
-        "human_weak": {  # U/s = 370, Ns*e**(-U/s) = 1.6e-70, Ns = 2.5
+        "human_weak": {  # U/s = 370, Ns*e**(-U/s) = 1.6e-70, Ns = 1.25
             "L": 130_000_000 // resize_factor,
             "r": 1e-8,
             "Ne": 10_000,
@@ -760,14 +770,14 @@ def compare(scenario, slim, n, reps):
             "emp_load": None,
             "q": 1,  # scaling factor
         },
-        "human_strong": {  # U/s = 3.7, Ns*e**(-U/s) = 41, Ns = 250
+        "human_strong": {  # U/s = 3.7, Ns*e**(-U/s) = 3.09, Ns = 125
             "L": 130_000_000 // resize_factor,
             "r": 1e-8,
             "Ne": 10_000,
             "U": 0.045 / resize_factor,
             # "s": 2.5e-2,
             "s": 1.25e-2,
-            "emp_load": 3.7,
+            "emp_load": 3.7 / resize_factor,
             "q": 1,  # scaling factor
         },
         "dros": {  # U/s = 0.4, Ns = 2.5e2

@@ -385,14 +385,22 @@ class MultiClassSimulator(Simulator):
         self.mean_load = self.U * (1 - self.s) / self.s
         self.rng = np.random.default_rng(self.seed)
         self.min_fitness = 0
-        self.P = [
-            ancestry.Population(
-                idx,
-                utils.poisson_pmf(idx + self.min_fitness + 1, self.mean_load) * self.Ne,
+        total_size = 0
+        self.P = []
+        for idx in range(self.num_populations - 1):
+            pop_size = (
+                utils.poisson_pmf(idx + self.min_fitness + 1, self.mean_load) * self.Ne
             )
-            for idx in range(self.num_populations - 1)
-        ]
-        self.P.append(ancestry.Population(len(self.P), 0.0))
+            self.P.append(
+                ancestry.Population(
+                    idx,
+                    pop_size,
+                )
+            )
+            total_size += pop_size
+        last_pop_size = self.Ne - total_size
+        assert last_pop_size > 0
+        self.P.append(ancestry.Population(len(self.P), last_pop_size))
         self.num_coal_events = np.zeros(self.num_populations, dtype=np.uint32)
         self.bound = math.inf
 
@@ -532,8 +540,9 @@ class MultiClassSimulator(Simulator):
             if end_time < t_inc + t:
                 t = end_time
                 # take care of all floating lineages
-                for lin in self.lineages:
-                    self.record_edges(lin, t, tables, nodes)
+                for pop in self.P:
+                    for lin in pop.lineages:
+                        self.record_edges(lin, t, tables, nodes)
                 break
 
             t += t_inc
